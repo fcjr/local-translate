@@ -158,9 +158,9 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
 
-          # Sign all native extensions — Tauri only signs frameworks and sidecars,
-          # not .so/.dylib files in bundled resources
-          find src-tauri/pyembed -type f \( -name "*.so" -o -name "*.dylib" \) | while read -r file; do
+          # Sign all native extensions and executables — Tauri only signs frameworks
+          # and sidecars, not .so/.dylib files or executables in bundled resources
+          find src-tauri/pyembed -type f \( -name "*.so" -o -name "*.dylib" -o -path "*/bin/python*" \) | while read -r file; do
             codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$file"
           done
 
