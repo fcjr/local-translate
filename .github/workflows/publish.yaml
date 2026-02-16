@@ -6,13 +6,54 @@ name: "publish"
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 defaults:
   run:
     shell: bash
 
 jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump release version
+        id: version
+        run: |
+          CURRENT=$(jq -r '.version' src-tauri/tauri.conf.json)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json
+          git commit -m "Bump version to ${{ steps.version.outputs.version }}"
+          git push
+
   publish-tauri:
+    needs: bump-version
     permissions:
       contents: write # required for creating github releases
     strategy:
@@ -25,10 +66,10 @@ jobs:
             target: "aarch64-apple-darwin"
 
     runs-on: ${{ matrix.platform }}
-    outputs:
-      app-version: ${{ steps.tauri.outputs.appVersion }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -106,7 +147,6 @@ jobs:
           echo "RUSTFLAGS=$RUSTFLAGS" >> $GITHUB_ENV
 
       - name: Build and bundle the app
-        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -119,7 +159,7 @@ jobs:
           args: '--target ${{ matrix.target }} --config src-tauri/tauri.bundle.json --verbose'
 
   update-homebrew-cask:
-    needs: publish-tauri
+    needs: [bump-version, publish-tauri]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -128,7 +168,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download "app-v${{ needs.publish-tauri.outputs.app-version }}" \
+          gh release download "app-v${{ needs.bump-version.outputs.version }}" \
             --repo "${{ github.repository }}" \
             --pattern "*.dmg" \
             --dir dmgs
@@ -136,7 +176,7 @@ jobs:
       - name: Compute SHA256 hashes
         id: sha
         run: |
-          VERSION="${{ needs.publish-tauri.outputs.app-version }}"
+          VERSION="${{ needs.bump-version.outputs.version }}"
           AARCH64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_aarch64.dmg" | cut -d ' ' -f1)
           X64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_x64.dmg" | cut -d ' ' -f1)
           echo "aarch64=$AARCH64_SHA" >> "$GITHUB_OUTPUT"
@@ -144,7 +184,7 @@ jobs:
 
       - name: Generate cask formula
         env:
-          VERSION: ${{ needs.publish-tauri.outputs.app-version }}
+          VERSION: ${{ needs.bump-version.outputs.version }}
           AARCH64_SHA: ${{ steps.sha.outputs.aarch64 }}
           X64_SHA: ${{ steps.sha.outputs.x64 }}
         run: |
@@ -198,7 +238,7 @@ jobs:
             --jq '.sha' 2>/dev/null || echo "")
 
           JSON_PAYLOAD=$(jq -n \
-            --arg message "Update local-translate to ${{ needs.publish-tauri.outputs.app-version }}" \
+            --arg message "Update local-translate to ${{ needs.bump-version.outputs.version }}" \
             --arg content "$CONTENT" \
             --arg sha "$EXISTING_SHA" \
             'if $sha == "" then {message: $message, content: $content} else {message: $message, content: $content, sha: $sha} end')
