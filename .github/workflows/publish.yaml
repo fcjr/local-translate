@@ -60,8 +60,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-14" # for Intel based macs.
-            target: "x86_64-apple-darwin"
           - platform: "macos-14" # for Arm based macs (M1 and above).
             target: "aarch64-apple-darwin"
 
@@ -170,7 +168,7 @@ jobs:
         run: |
           gh release download "app-v${{ needs.bump-version.outputs.version }}" \
             --repo "${{ github.repository }}" \
-            --pattern "*.dmg" \
+            --pattern "*_aarch64.dmg" \
             --dir dmgs
 
       - name: Compute SHA256 hashes
@@ -178,34 +176,26 @@ jobs:
         run: |
           VERSION="${{ needs.bump-version.outputs.version }}"
           AARCH64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_aarch64.dmg" | cut -d ' ' -f1)
-          X64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_x64.dmg" | cut -d ' ' -f1)
           echo "aarch64=$AARCH64_SHA" >> "$GITHUB_OUTPUT"
-          echo "x64=$X64_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Generate cask formula
         env:
           VERSION: ${{ needs.bump-version.outputs.version }}
           AARCH64_SHA: ${{ steps.sha.outputs.aarch64 }}
-          X64_SHA: ${{ steps.sha.outputs.x64 }}
         run: |
           cat > local-translate.rb << 'RUBY'
           cask "local-translate" do
             version "PLACEHOLDER_VERSION"
 
-            on_arm do
-              url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local%20Translate_#{version}_aarch64.dmg"
-              sha256 "PLACEHOLDER_AARCH64_SHA"
-            end
-            on_intel do
-              url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local%20Translate_#{version}_x64.dmg"
-              sha256 "PLACEHOLDER_X64_SHA"
-            end
+            url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local%20Translate_#{version}_aarch64.dmg"
+            sha256 "PLACEHOLDER_AARCH64_SHA"
 
             name "Local Translate"
             desc "Privacy-first, offline desktop translation app"
             homepage "https://github.com/fcjr/local-translate"
 
             depends_on macos: ">= :ventura"
+            depends_on arch: :arm64
 
             app "Local Translate.app"
 
@@ -224,7 +214,6 @@ jobs:
 
           sed -i "s/PLACEHOLDER_VERSION/$VERSION/" local-translate.rb
           sed -i "s/PLACEHOLDER_AARCH64_SHA/$AARCH64_SHA/" local-translate.rb
-          sed -i "s/PLACEHOLDER_X64_SHA/$X64_SHA/" local-translate.rb
 
       - name: Push cask to Homebrew tap
         env:
