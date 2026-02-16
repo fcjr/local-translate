@@ -1,16 +1,57 @@
-# Tauri + Vue + TypeScript
+# Local Translate
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Privacy-first, offline desktop translation app for macOS. All translation runs locally on your machine using [TranslateGemma](https://ai.google.dev/gemma/docs/core/translate_gemma) models accelerated by Apple Silicon — no data ever leaves your device.
 
-## Recommended IDE Setup
+<p align="center">
+  <img src=".github/screenshots/translate.png" width="600" alt="Local Translate">
+  <img src=".github/screenshots/settings.png" width="600" alt="Settings">
+</p>
 
-- [VS Code](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Features
 
-## Type Support For `.vue` Imports in TS
+- **Fully offline** — no internet required after initial model download
+- **79 languages** — powered by Google's TranslateGemma models
+- **Multiple models** — choose between speed (4B) and accuracy (27B)
+- **Text-to-speech** — optional Qwen3 TTS for 10 languages
+- **GPU accelerated** — runs on Apple Silicon via MLX
 
-Since TypeScript cannot handle type information for `.vue` imports, they are shimmed to be a generic Vue component type by default. In most cases this is fine if you don't really care about component prop types outside of templates. However, if you wish to get actual prop types in `.vue` imports (for example to get props validation when using manual `h(...)` calls), you can enable Volar's Take Over mode by following these steps:
+## Install
 
-1. Run `Extensions: Show Built-in Extensions` from VS Code's command palette, look for `TypeScript and JavaScript Language Features`, then right click and select `Disable (Workspace)`. By default, Take Over mode will enable itself if the default TypeScript extension is disabled.
-2. Reload the VS Code window by running `Developer: Reload Window` from the command palette.
+### Homebrew
 
-You can learn more about Take Over mode [here](https://github.com/johnsoncodehk/volar/discussions/471).
+```sh
+brew install fcjr/fcjr/local-translate
+```
+
+### Manual
+
+Download the latest DMG from [Releases](https://github.com/fcjr/local-translate/releases).
+
+## Models
+
+| Model | RAM | Download Size |
+|---|---|---|
+| TranslateGemma 4B (4-bit) | 4 GB | ~2.2 GB |
+| TranslateGemma 4B (8-bit) | 6 GB | ~4.1 GB |
+| TranslateGemma 27B (4-bit) | 18 GB | ~15.2 GB |
+
+Models are downloaded on first use and cached in `~/.cache/local-translate/`.
+
+## Requirements
+
+- macOS Ventura (13.0) or later
+- Apple Silicon (M1 or later)
+
+## Development
+
+```bash
+pnpm install
+uv sync
+pnpm tauri dev
+```
+
+Requires Node.js, Rust, and Python 3.10-3.12.
+
+## License
+
+[MIT](LICENSE)
