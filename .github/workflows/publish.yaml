@@ -114,7 +114,7 @@ jobs:
           DEST_DIR="src-tauri/pyembed"
 
           mkdir "$DEST_DIR"
-          curl -L "$url" | tar -xz -C "$DEST_DIR"
+          curl -fL "$url" | tar -xz -C "$DEST_DIR"
 
           # ref: <https://github.com/pytauri/pytauri/issues/99#issuecomment-2704556726>
           if [[ "${{ runner.os }}" == "macOS" ]]; then
