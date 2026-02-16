@@ -175,7 +175,7 @@ jobs:
         id: sha
         run: |
           VERSION="${{ needs.bump-version.outputs.version }}"
-          AARCH64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_aarch64.dmg" | cut -d ' ' -f1)
+          AARCH64_SHA=$(sha256sum "dmgs/Local.Translate_${VERSION}_aarch64.dmg" | cut -d ' ' -f1)
           echo "aarch64=$AARCH64_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Generate cask formula
@@ -187,7 +187,7 @@ jobs:
           cask "local-translate" do
             version "PLACEHOLDER_VERSION"
 
-            url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local%20Translate_#{version}_aarch64.dmg"
+            url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local.Translate_#{version}_aarch64.dmg"
             sha256 "PLACEHOLDER_AARCH64_SHA"
 
             name "Local Translate"
