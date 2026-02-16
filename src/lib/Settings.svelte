@@ -103,15 +103,7 @@
           </div>
 
           <div class="model-actions">
-            {#if model.status === "not_downloaded"}
-              <button
-                class="btn btn-primary"
-                onclick={() => handleDownload(model.id)}
-                disabled={downloadingId !== null || loadingId !== null}
-              >
-                Download
-              </button>
-            {:else if downloadingId === model.id}
+            {#if downloadingId === model.id}
               <div class="progress-container">
                 <div class="progress-bar">
                   <div
@@ -121,6 +113,14 @@
                 </div>
                 <span class="progress-text">{downloadMessage}</span>
               </div>
+            {:else if model.status === "not_downloaded"}
+              <button
+                class="btn btn-primary"
+                onclick={() => handleDownload(model.id)}
+                disabled={downloadingId !== null || loadingId !== null}
+              >
+                Download
+              </button>
             {:else if model.status === "downloaded" && model.id !== currentModelId}
               <button
                 class="btn btn-secondary"

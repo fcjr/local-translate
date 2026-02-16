@@ -125,16 +125,44 @@ class ModelManager:
         local_dir = CACHE_DIR / model_id
 
         try:
-            from huggingface_hub import snapshot_download
+            from huggingface_hub import HfApi, hf_hub_download
 
             if progress_callback:
-                progress_callback(0.0, "Starting download...")
+                progress_callback(0.0, "Fetching model info...")
 
-            snapshot_download(
-                repo_id=repo_id,
-                local_dir=str(local_dir),
-                local_dir_use_symlinks=False,
-            )
+            api = HfApi()
+            info = api.repo_info(repo_id)
+            files = [
+                (s.rfilename, s.size)
+                for s in (info.siblings or [])
+            ]
+            total_files = len(files)
+            total_size = sum(s for _, s in files if s)
+            downloaded_size = 0
+
+            for i, (filename, size) in enumerate(files):
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    local_dir=str(local_dir),
+                    local_dir_use_symlinks=False,
+                )
+                if progress_callback:
+                    if total_size > 0 and size:
+                        downloaded_size += size
+                        progress = min(downloaded_size / total_size, 0.99)
+                        downloaded_gb = downloaded_size / 1e9
+                        total_gb = total_size / 1e9
+                        progress_callback(
+                            progress,
+                            f"Downloading... {downloaded_gb:.1f}/{total_gb:.1f} GB",
+                        )
+                    else:
+                        progress = min((i + 1) / total_files, 0.99)
+                        progress_callback(
+                            progress,
+                            f"Downloading file {i + 1}/{total_files}...",
+                        )
 
             (local_dir / ".download_complete").touch()
 
