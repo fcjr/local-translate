@@ -17,6 +17,7 @@
     onlangchange: (code: string) => void;
     ontextchange?: (text: string) => void;
     ontogglefavorite: (code: string) => void;
+    maxlength?: number;
   }
 
   let {
@@ -33,6 +34,7 @@
     onlangchange,
     ontextchange,
     ontogglefavorite,
+    maxlength,
   }: Props = $props();
 
   const TTS_SUPPORTED_LANGS = new Set([
@@ -42,6 +44,7 @@
   type TtsState = "idle" | "loading" | "playing";
   let ttsState: TtsState = $state("idle");
   let currentAudio: HTMLAudioElement | null = null;
+  let currentAudioUrl: string | null = null;
 
   let langSupported = $derived(TTS_SUPPORTED_LANGS.has(lang));
 
@@ -79,16 +82,19 @@
 
       const audio = new Audio(url);
       currentAudio = audio;
+      currentAudioUrl = url;
       ttsState = "playing";
 
       audio.onended = () => {
         URL.revokeObjectURL(url);
         currentAudio = null;
+        currentAudioUrl = null;
         ttsState = "idle";
       };
       audio.onerror = () => {
         URL.revokeObjectURL(url);
         currentAudio = null;
+        currentAudioUrl = null;
         ttsState = "idle";
       };
       audio.play();
@@ -102,6 +108,10 @@
       currentAudio.pause();
       currentAudio.currentTime = 0;
       currentAudio = null;
+    }
+    if (currentAudioUrl) {
+      URL.revokeObjectURL(currentAudioUrl);
+      currentAudioUrl = null;
     }
     ttsState = "idle";
   }
@@ -141,6 +151,7 @@
       value={text}
       {readonly}
       {placeholder}
+      maxlength={readonly ? undefined : maxlength}
       oninput={(e) => ontextchange?.(e.currentTarget.value)}
     ></textarea>
     {#if loading}

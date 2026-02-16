@@ -25,7 +25,8 @@ def _respond(obj: dict) -> None:
 
 def main() -> None:
     # Redirect stdout → /dev/null so library prints don't corrupt the JSON protocol.
-    sys.stdout = open(os.devnull, "w")
+    _devnull = open(os.devnull, "w")
+    sys.stdout = _devnull
 
     try:
         import numpy as np

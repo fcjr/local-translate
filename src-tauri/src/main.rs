@@ -48,12 +48,18 @@ fn main() -> Result<Infallible, Box<dyn Error>> {
         // The embedded PyO3 interpreter doesn't process .pth files or
         // activate the venv (symlink resolution defeats pyvenv.cfg lookup).
         // Explicitly add our source dir and the venv's site-packages to PYTHONPATH.
+        // Set the Python binary path for worker subprocesses
+        let python_bin = venv_dir.join("bin").join("python3");
+        std::env::set_var("LOCAL_TRANSLATE_PYTHON", python_bin.to_string_lossy().as_ref());
+
         let src_python = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src-python");
         let mut paths = vec![src_python.to_string_lossy().into_owned()];
         if let Some(sp) = find_site_packages(&venv_dir) {
             paths.push(sp.to_string_lossy().into_owned());
         }
-        std::env::set_var("PYTHONPATH", paths.join(":"));
+        if let Ok(pythonpath) = std::env::join_paths(&paths) {
+            std::env::set_var("PYTHONPATH", pythonpath);
+        }
 
         PythonInterpreterEnv::Venv(venv_dir.into())
     } else {
@@ -61,6 +67,13 @@ fn main() -> Result<Infallible, Box<dyn Error>> {
         let resource_dir = resource_dir(context.package_info(), &tauri::Env::default())
             .map_err(|err| format!("failed to get resource dir: {err}"))?;
         let resource_dir = simplified(&resource_dir).to_owned();
+
+        // Set the Python binary path for worker subprocesses.
+        // The resource mapping in tauri.bundle.json copies pyembed/python/*
+        // directly into Resources/, so the binary is at Resources/bin/python3.
+        let python_bin = resource_dir.join("bin").join("python3");
+        std::env::set_var("LOCAL_TRANSLATE_PYTHON", python_bin.to_string_lossy().as_ref());
+
         PythonInterpreterEnv::Standalone(resource_dir.into())
     };
 

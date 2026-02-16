@@ -26,12 +26,17 @@
   let sourceText = $state("");
   let targetText = $state("");
 
-  let favoriteLangs: string[] = $state(
-    JSON.parse(localStorage.getItem("lt-favorite-langs") || "[]")
-  );
-  let recentLangs: string[] = $state(
-    JSON.parse(localStorage.getItem("lt-recent-langs") || "[]")
-  );
+  function safeParseJson<T>(key: string, fallback: T): T {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  let favoriteLangs: string[] = $state(safeParseJson("lt-favorite-langs", [] as string[]));
+  let recentLangs: string[] = $state(safeParseJson("lt-recent-langs", [] as string[]));
 
   function pushRecent(code: string) {
     recentLangs = [code, ...recentLangs.filter((c) => c !== code)].slice(0, 5);
@@ -154,12 +159,6 @@
     models = await listModels();
     const status = await getModelStatus("4b");
     currentModelId = status.currentModelId;
-    // Also check other models
-    for (const m of models) {
-      if (m.status === "ready") {
-        currentModelId = m.id;
-      }
-    }
   }
 
   function handleSourceTextChange(text: string) {
@@ -177,6 +176,9 @@
     translating = true;
     try {
       targetText = await translate(sourceText, sourceLang, targetLang);
+      if (statusType === "error") {
+        setStatus("ready", "Ready");
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus("error", msg);
@@ -275,6 +277,7 @@
       onlangchange={handleSourceLangChange}
       ontextchange={handleSourceTextChange}
       ontogglefavorite={toggleFavorite}
+      maxlength={5000}
     />
 
     <div class="divider">

@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
+from local_translate._python import find_python
+
 CACHE_DIR = Path.home() / ".cache" / "local-translate" / "models"
 
 AVAILABLE_MODELS: dict[str, dict[str, str | int | float]] = {
@@ -29,20 +31,6 @@ AVAILABLE_MODELS: dict[str, dict[str, str | int | float]] = {
         "description": "Best quality, requires significant RAM (~15.2GB download)",
     },
 }
-
-
-def _find_venv_python() -> str:
-    """Find the venv Python executable for spawning the MLX worker subprocess."""
-    # The venv is at <project_root>/.venv, and this file is at
-    # <project_root>/src-tauri/src-python/local_translate/model_manager.py
-    pkg_dir = Path(__file__).resolve().parent
-    project_root = pkg_dir.parent.parent.parent
-    venv_python = project_root / ".venv" / "bin" / "python3"
-    if venv_python.exists():
-        return str(venv_python)
-    raise FileNotFoundError(
-        f"Could not find venv Python at {venv_python}. Run `uv sync` first."
-    )
 
 
 class ModelStatus(str, Enum):
@@ -71,11 +59,12 @@ class ModelManager:
         self._initialized = True
         self._current_model_id: str | None = None
         self._worker: subprocess.Popen | None = None  # type: ignore[type-arg]
+        self._cmd_lock = threading.Lock()
         self._status: dict[str, ModelStatus] = {}
         self._error: dict[str, str] = {}
         for model_id in AVAILABLE_MODELS:
             model_dir = CACHE_DIR / model_id
-            if model_dir.exists() and any(model_dir.iterdir()):
+            if model_dir.exists() and (model_dir / ".download_complete").is_file():
                 self._status[model_id] = ModelStatus.DOWNLOADED
             else:
                 self._status[model_id] = ModelStatus.NOT_DOWNLOADED
@@ -91,18 +80,24 @@ class ModelManager:
 
     def _send_worker_cmd(self, cmd: dict) -> dict:
         """Send a JSON command to the worker subprocess and read the response."""
-        worker = self._worker
-        if worker is None or worker.stdin is None or worker.stdout is None:
-            raise RuntimeError("Worker process is not running")
-        worker.stdin.write(json.dumps(cmd) + "\n")
-        worker.stdin.flush()
-        resp_line = worker.stdout.readline()
-        if not resp_line:
-            stderr = ""
-            if worker.stderr:
-                stderr = worker.stderr.read()
-            raise RuntimeError(f"Worker process exited unexpectedly: {stderr}")
-        return json.loads(resp_line)
+        with self._cmd_lock:
+            worker = self._worker
+            if worker is None or worker.stdin is None or worker.stdout is None:
+                raise RuntimeError("Worker process is not running")
+            worker.stdin.write(json.dumps(cmd) + "\n")
+            worker.stdin.flush()
+            resp_line = worker.stdout.readline()
+            if not resp_line:
+                stderr = ""
+                try:
+                    worker.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    worker.kill()
+                    worker.wait()
+                if worker.stderr:
+                    stderr = worker.stderr.read()
+                raise RuntimeError(f"Worker process exited unexpectedly: {stderr}")
+            return json.loads(resp_line)
 
     def _stop_worker(self) -> None:
         """Stop the current worker subprocess."""
@@ -141,6 +136,8 @@ class ModelManager:
                 local_dir_use_symlinks=False,
             )
 
+            (local_dir / ".download_complete").touch()
+
             if progress_callback:
                 progress_callback(1.0, "Download complete")
 
@@ -172,7 +169,7 @@ class ModelManager:
             # Spawn a new worker subprocess with its own Metal context.
             # Run the script directly by path (not -m) to avoid importing
             # the package __init__.py which requires the pytauri native module.
-            python = _find_venv_python()
+            python = find_python()
             worker_script = str(Path(__file__).resolve().parent / "mlx_worker.py")
             self._worker = subprocess.Popen(
                 [python, worker_script],

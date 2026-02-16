@@ -3,7 +3,7 @@ name = "local-translate"
 version = "0.1.0"
 description = "Local offline translation using TranslateGemma"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "pytauri == 0.8.*",
     "pydantic == 2.*",

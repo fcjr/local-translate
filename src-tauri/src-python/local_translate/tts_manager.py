@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
+from local_translate._python import find_python
+
 CACHE_DIR = Path.home() / ".cache" / "local-translate" / "tts-models"
 
 DEFAULT_MODEL_REPO = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16"
@@ -31,18 +33,6 @@ TTS_VOICE_MAP: dict[str, str] = {
     "zh": "Vivian",
     "en": "Chelsie",
 }
-
-
-def _find_venv_python() -> str:
-    """Find the venv Python executable for spawning the TTS worker subprocess."""
-    pkg_dir = Path(__file__).resolve().parent
-    project_root = pkg_dir.parent.parent.parent
-    venv_python = project_root / ".venv" / "bin" / "python3"
-    if venv_python.exists():
-        return str(venv_python)
-    raise FileNotFoundError(
-        f"Could not find venv Python at {venv_python}. Run `uv sync` first."
-    )
 
 
 class TtsStatus(str, Enum):
@@ -70,11 +60,12 @@ class TtsManager:
             return
         self._initialized = True
         self._worker: subprocess.Popen | None = None  # type: ignore[type-arg]
+        self._cmd_lock = threading.Lock()
         self._status: TtsStatus = TtsStatus.NOT_DOWNLOADED
         self._error: str | None = None
 
         model_dir = CACHE_DIR / "default"
-        if model_dir.exists() and any(model_dir.iterdir()):
+        if model_dir.exists() and (model_dir / ".download_complete").is_file():
             self._status = TtsStatus.DOWNLOADED
 
     def get_status(self) -> TtsStatus:
@@ -87,26 +78,27 @@ class TtsManager:
         return lang_code in TTS_LANGUAGE_MAP
 
     def _send_worker_cmd(self, cmd: dict) -> dict:
-        worker = self._worker
-        if worker is None or worker.stdin is None or worker.stdout is None:
-            raise RuntimeError("TTS worker process is not running")
-        try:
-            worker.stdin.write(json.dumps(cmd) + "\n")
-            worker.stdin.flush()
-        except BrokenPipeError:
-            # Worker already exited — try to read any fatal message it left
-            resp_line = worker.stdout.readline() if worker.stdout else ""
-            if resp_line:
-                resp = json.loads(resp_line)
-                raise RuntimeError(resp.get("message", "TTS worker crashed"))
-            raise RuntimeError("TTS worker process crashed before receiving command")
-        resp_line = worker.stdout.readline()
-        if not resp_line:
-            raise RuntimeError("TTS worker process exited unexpectedly")
-        resp = json.loads(resp_line)
-        if resp.get("status") == "fatal":
-            raise RuntimeError(resp.get("message", "TTS worker fatal error"))
-        return resp
+        with self._cmd_lock:
+            worker = self._worker
+            if worker is None or worker.stdin is None or worker.stdout is None:
+                raise RuntimeError("TTS worker process is not running")
+            try:
+                worker.stdin.write(json.dumps(cmd) + "\n")
+                worker.stdin.flush()
+            except BrokenPipeError:
+                # Worker already exited — try to read any fatal message it left
+                resp_line = worker.stdout.readline() if worker.stdout else ""
+                if resp_line:
+                    resp = json.loads(resp_line)
+                    raise RuntimeError(resp.get("message", "TTS worker crashed"))
+                raise RuntimeError("TTS worker process crashed before receiving command")
+            resp_line = worker.stdout.readline()
+            if not resp_line:
+                raise RuntimeError("TTS worker process exited unexpectedly")
+            resp = json.loads(resp_line)
+            if resp.get("status") == "fatal":
+                raise RuntimeError(resp.get("message", "TTS worker fatal error"))
+            return resp
 
     def _stop_worker(self) -> None:
         if self._worker is not None:
@@ -138,6 +130,8 @@ class TtsManager:
                 local_dir_use_symlinks=False,
             )
 
+            (local_dir / ".download_complete").touch()
+
             if progress_callback:
                 progress_callback(1.0, "TTS model download complete")
 
@@ -158,7 +152,7 @@ class TtsManager:
 
             self._stop_worker()
 
-            python = _find_venv_python()
+            python = find_python()
             worker_script = str(Path(__file__).resolve().parent / "tts_worker.py")
             self._worker = subprocess.Popen(
                 [python, worker_script],

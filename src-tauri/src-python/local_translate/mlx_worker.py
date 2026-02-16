@@ -8,10 +8,19 @@ over stdin/stdout.
 from __future__ import annotations
 
 import json
+import os
 import sys
+
+# Save the real stdout for JSON-line communication before any library imports
+# can pollute it with progress bars, warnings, etc.
+_json_out = os.fdopen(os.dup(sys.stdout.fileno()), "w")
 
 
 def main() -> None:
+    # Redirect stdout → /dev/null so library prints don't corrupt the JSON protocol.
+    _devnull = open(os.devnull, "w")
+    sys.stdout = _devnull
+
     import mlx_lm
 
     model = None
@@ -64,9 +73,14 @@ def main() -> None:
 
 
 def _respond(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    _json_out.write(json.dumps(obj) + "\n")
+    _json_out.flush()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+
+        _respond({"status": "fatal", "message": traceback.format_exc()})

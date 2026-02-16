@@ -19,6 +19,21 @@
   let loadingId: string | null = $state(null);
   let error: string | null = $state(null);
 
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && open) {
+      onclose();
+    }
+  }
+
+  $effect(() => {
+    if (open) {
+      document.addEventListener("keydown", handleKeydown);
+    }
+    return () => {
+      document.removeEventListener("keydown", handleKeydown);
+    };
+  });
+
   async function handleDownload(modelId: string) {
     downloadingId = modelId;
     downloadProgress = 0;
