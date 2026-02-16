@@ -9,8 +9,6 @@ from typing import Callable
 
 from local_translate._python import find_python
 
-CACHE_DIR = Path.home() / ".cache" / "local-translate" / "tts-models"
-
 DEFAULT_MODEL_REPO = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16"
 
 # Qwen3-TTS supports these languages (full English names).
@@ -63,10 +61,17 @@ class TtsManager:
         self._cmd_lock = threading.Lock()
         self._status: TtsStatus = TtsStatus.NOT_DOWNLOADED
         self._error: str | None = None
+        self._model_path: str | None = None
 
-        model_dir = CACHE_DIR / "default"
-        if model_dir.exists() and (model_dir / ".download_complete").is_file():
+        from huggingface_hub import snapshot_download
+
+        try:
+            self._model_path = snapshot_download(
+                DEFAULT_MODEL_REPO, local_files_only=True
+            )
             self._status = TtsStatus.DOWNLOADED
+        except Exception:
+            pass
 
     def get_status(self) -> TtsStatus:
         return self._status
@@ -116,10 +121,9 @@ class TtsManager:
     ) -> None:
         self._status = TtsStatus.DOWNLOADING
         self._error = None
-        local_dir = CACHE_DIR / "default"
 
         try:
-            from huggingface_hub import HfApi, hf_hub_download
+            from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
             if progress_callback:
                 progress_callback(0.0, "Fetching TTS model info...")
@@ -135,12 +139,7 @@ class TtsManager:
             downloaded_size = 0
 
             for i, (filename, size) in enumerate(files):
-                hf_hub_download(
-                    repo_id=DEFAULT_MODEL_REPO,
-                    filename=filename,
-                    local_dir=str(local_dir),
-                    local_dir_use_symlinks=False,
-                )
+                hf_hub_download(repo_id=DEFAULT_MODEL_REPO, filename=filename)
                 if progress_callback:
                     if total_size > 0 and size:
                         downloaded_size += size
@@ -158,7 +157,9 @@ class TtsManager:
                             f"Downloading TTS file {i + 1}/{total_files}...",
                         )
 
-            (local_dir / ".download_complete").touch()
+            self._model_path = snapshot_download(
+                DEFAULT_MODEL_REPO, local_files_only=True
+            )
 
             if progress_callback:
                 progress_callback(1.0, "TTS model download complete")
@@ -176,7 +177,9 @@ class TtsManager:
         self._status = TtsStatus.LOADING
 
         try:
-            model_dir = str(CACHE_DIR / "default")
+            if not self._model_path:
+                raise RuntimeError("TTS model path not found")
+            model_dir = self._model_path
 
             self._stop_worker()
 

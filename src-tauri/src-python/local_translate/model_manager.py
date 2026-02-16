@@ -9,8 +9,6 @@ from typing import Callable
 
 from local_translate._python import find_python
 
-CACHE_DIR = Path.home() / ".cache" / "local-translate" / "models"
-
 AVAILABLE_MODELS: dict[str, dict[str, str | int | float]] = {
     "4b": {
         "name": "TranslateGemma 4B (4-bit)",
@@ -62,11 +60,18 @@ class ModelManager:
         self._cmd_lock = threading.Lock()
         self._status: dict[str, ModelStatus] = {}
         self._error: dict[str, str] = {}
-        for model_id in AVAILABLE_MODELS:
-            model_dir = CACHE_DIR / model_id
-            if model_dir.exists() and (model_dir / ".download_complete").is_file():
+        self._model_paths: dict[str, str] = {}
+
+        from huggingface_hub import snapshot_download
+
+        for model_id, info in AVAILABLE_MODELS.items():
+            try:
+                path = snapshot_download(
+                    str(info["repo_id"]), local_files_only=True
+                )
+                self._model_paths[model_id] = path
                 self._status[model_id] = ModelStatus.DOWNLOADED
-            else:
+            except Exception:
                 self._status[model_id] = ModelStatus.NOT_DOWNLOADED
 
     def get_status(self, model_id: str) -> ModelStatus:
@@ -122,10 +127,9 @@ class ModelManager:
         self._error.pop(model_id, None)
         model_info = AVAILABLE_MODELS[model_id]
         repo_id = str(model_info["repo_id"])
-        local_dir = CACHE_DIR / model_id
 
         try:
-            from huggingface_hub import HfApi, hf_hub_download
+            from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
             if progress_callback:
                 progress_callback(0.0, "Fetching model info...")
@@ -141,12 +145,7 @@ class ModelManager:
             downloaded_size = 0
 
             for i, (filename, size) in enumerate(files):
-                hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    local_dir=str(local_dir),
-                    local_dir_use_symlinks=False,
-                )
+                hf_hub_download(repo_id=repo_id, filename=filename)
                 if progress_callback:
                     if total_size > 0 and size:
                         downloaded_size += size
@@ -164,7 +163,8 @@ class ModelManager:
                             f"Downloading file {i + 1}/{total_files}...",
                         )
 
-            (local_dir / ".download_complete").touch()
+            model_path = snapshot_download(repo_id, local_files_only=True)
+            self._model_paths[model_id] = model_path
 
             if progress_callback:
                 progress_callback(1.0, "Download complete")
@@ -185,7 +185,7 @@ class ModelManager:
         self._status[model_id] = ModelStatus.LOADING
 
         try:
-            model_dir = str(CACHE_DIR / model_id)
+            model_dir = self._model_paths[model_id]
 
             # Stop existing worker if switching models
             if self._current_model_id and self._current_model_id != model_id:

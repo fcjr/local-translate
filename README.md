@@ -35,7 +35,7 @@ Download the latest DMG from [Releases](https://github.com/fcjr/local-translate/
 | TranslateGemma 4B (8-bit) | 6 GB | ~4.1 GB |
 | TranslateGemma 27B (4-bit) | 18 GB | ~15.2 GB |
 
-Models are downloaded on first use and cached in `~/.cache/local-translate/`.
+Models are downloaded on first use and cached in the [Hugging Face Hub cache](https://huggingface.co/docs/huggingface_hub/guides/manage-cache) (`~/.cache/huggingface/hub/`).
 
 ## Requirements
 

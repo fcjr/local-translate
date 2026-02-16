@@ -53,7 +53,7 @@ The Python executable path for subprocess spawning is resolved via `_python.py`:
 
 ### Model storage
 
-Models are cached in `~/.cache/local-translate/models/{model_id}` (translation) and `~/.cache/local-translate/tts-models/default` (TTS), downloaded from Hugging Face on demand. A `.download_complete` marker file prevents re-downloading.
+Models are stored in the standard Hugging Face Hub cache (`~/.cache/huggingface/hub/`), downloaded on demand. At startup, `snapshot_download(repo_id, local_files_only=True)` checks for cached models without network calls.
 
 ## Key Patterns
 
