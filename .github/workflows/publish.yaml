@@ -5,12 +5,12 @@
 name: "publish"
 
 on:
-  # Manual trigger
   workflow_dispatch:
-  # On push to `release` branch
-  push:
-    branches:
-      - release
+    inputs:
+      release_version:
+        description: "Version to update Homebrew cask for (e.g. 0.1.0). Leave empty to run the build."
+        required: false
+        default: ""
 
 defaults:
   run:
@@ -18,6 +18,7 @@ defaults:
 
 jobs:
   publish-tauri:
+    if: inputs.release_version == ''
     permissions:
       contents: write # required for creating github releases
     strategy:
@@ -119,3 +120,92 @@ jobs:
           releaseDraft: true
           includeDebug: true # Optional, disable to speed up the build
           args: '--target ${{ matrix.target }} --config src-tauri/tauri.bundle.json --verbose'
+
+  update-homebrew-cask:
+    if: inputs.release_version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download DMG assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "app-v${{ inputs.release_version }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "*.dmg" \
+            --dir dmgs
+
+      - name: Compute SHA256 hashes
+        id: sha
+        run: |
+          VERSION="${{ inputs.release_version }}"
+          AARCH64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_aarch64.dmg" | cut -d ' ' -f1)
+          X64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_x64.dmg" | cut -d ' ' -f1)
+          echo "aarch64=$AARCH64_SHA" >> "$GITHUB_OUTPUT"
+          echo "x64=$X64_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Generate cask formula
+        env:
+          VERSION: ${{ inputs.release_version }}
+          AARCH64_SHA: ${{ steps.sha.outputs.aarch64 }}
+          X64_SHA: ${{ steps.sha.outputs.x64 }}
+        run: |
+          cat > local-translate.rb << 'RUBY'
+          cask "local-translate" do
+            version "PLACEHOLDER_VERSION"
+
+            on_arm do
+              url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local%20Translate_#{version}_aarch64.dmg"
+              sha256 "PLACEHOLDER_AARCH64_SHA"
+            end
+            on_intel do
+              url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local%20Translate_#{version}_x64.dmg"
+              sha256 "PLACEHOLDER_X64_SHA"
+            end
+
+            name "Local Translate"
+            desc "Privacy-first, offline desktop translation app"
+            homepage "https://github.com/fcjr/local-translate"
+
+            depends_on macos: ">= :ventura"
+
+            app "Local Translate.app"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+              regex(/^app[._-]v?(\d+(?:\.\d+)+)$/i)
+            end
+
+            zap trash: [
+              "~/Library/Application Support/com.leftshift.local-translate.app",
+              "~/.cache/local-translate",
+            ]
+          end
+          RUBY
+
+          sed -i "s/PLACEHOLDER_VERSION/$VERSION/" local-translate.rb
+          sed -i "s/PLACEHOLDER_AARCH64_SHA/$AARCH64_SHA/" local-translate.rb
+          sed -i "s/PLACEHOLDER_X64_SHA/$X64_SHA/" local-translate.rb
+
+      - name: Push cask to Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          CONTENT=$(base64 -w 0 local-translate.rb)
+
+          # Check if the file already exists to get its SHA (needed for updates)
+          EXISTING_SHA=$(gh api \
+            "repos/fcjr/homebrew-fcjr/contents/Casks/local-translate.rb" \
+            --jq '.sha' 2>/dev/null || echo "")
+
+          JSON_PAYLOAD=$(jq -n \
+            --arg message "Update local-translate to ${{ inputs.release_version }}" \
+            --arg content "$CONTENT" \
+            --arg sha "$EXISTING_SHA" \
+            'if $sha == "" then {message: $message, content: $content} else {message: $message, content: $content, sha: $sha} end')
+
+          gh api -X PUT \
+            "repos/fcjr/homebrew-fcjr/contents/Casks/local-translate.rb" \
+            --input - <<< "$JSON_PAYLOAD"
