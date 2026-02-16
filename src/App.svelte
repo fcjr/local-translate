@@ -9,6 +9,9 @@
     getModelStatus,
     downloadModel,
     loadModel,
+    getTtsStatus,
+    downloadTtsModel,
+    loadTtsModel,
     type LanguageInfo,
     type ModelInfo,
     type DownloadProgress,
@@ -58,6 +61,11 @@
   let initDownloadMessage = $state("");
   let initLoading = $state(false);
 
+  // TTS state
+  let ttsReady = $state(false);
+  let ttsStatusMessage = $state("");
+  let ttsError = $state("");
+
   onMount(async () => {
     try {
       languages = await listLanguages();
@@ -67,6 +75,7 @@
       if (currentModelId) {
         setStatus("ready", "Ready");
         initializing = false;
+        initTts();
         return;
       }
 
@@ -80,6 +89,7 @@
         initLoading = false;
         setStatus("ready", "Ready");
         initializing = false;
+        initTts();
         return;
       }
 
@@ -99,6 +109,7 @@
       initLoading = false;
       setStatus("ready", "Ready");
       initializing = false;
+      initTts();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus("error", msg);
@@ -109,6 +120,34 @@
   function setStatus(type: typeof statusType, message: string) {
     statusType = type;
     statusMessage = message;
+  }
+
+  async function initTts() {
+    try {
+      ttsError = "";
+      const status = await getTtsStatus();
+      if (status.status === "ready") {
+        ttsReady = true;
+        return;
+      }
+
+      if (status.status !== "downloaded") {
+        ttsStatusMessage = "Downloading TTS model...";
+        await downloadTtsModel((p: DownloadProgress) => {
+          ttsStatusMessage = `Downloading TTS model... ${Math.round(p.progress * 100)}%`;
+        });
+      }
+
+      ttsStatusMessage = "Loading TTS model...";
+      await loadTtsModel();
+      ttsReady = true;
+      ttsStatusMessage = "";
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("TTS init failed:", msg);
+      ttsError = msg;
+      ttsStatusMessage = "";
+    }
   }
 
   async function refreshModels() {
@@ -230,6 +269,8 @@
       text={sourceText}
       favorites={favoriteLangs}
       recents={recentLangs}
+      {ttsReady}
+      {ttsError}
       placeholder="Enter text to translate..."
       onlangchange={handleSourceLangChange}
       ontextchange={handleSourceTextChange}
@@ -253,6 +294,8 @@
       text={targetText}
       favorites={favoriteLangs}
       recents={recentLangs}
+      {ttsReady}
+      {ttsError}
       readonly
       loading={translating}
       placeholder="Translation will appear here..."
@@ -263,7 +306,7 @@
 
   <footer class="status-bar">
     <span class="status-indicator" class:ready={statusType === "ready"} class:error={statusType === "error"}></span>
-    <span class="status-text">{statusMessage}</span>
+    <span class="status-text">{ttsStatusMessage || statusMessage}</span>
     {#if currentModelId}
       <span class="status-model">TranslateGemma {currentModelId.toUpperCase()}</span>
     {/if}

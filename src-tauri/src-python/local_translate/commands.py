@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import anyio
-from pydantic import BaseModel, ConfigDict, RootModel
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, model_serializer
 from pytauri import Commands
 from pytauri.ipc import JavaScriptChannelId, WebviewWindow
 
 from local_translate.languages import SUPPORTED_LANGUAGES
 from local_translate.model_manager import AVAILABLE_MODELS, ModelManager, ModelStatus
+from local_translate.tts_manager import TtsManager, TtsStatus
 
 commands: Commands = Commands()
-
-
-def _camel_config() -> ConfigDict:
-    return ConfigDict(populate_by_name=True, alias_generator=lambda s: _to_camel(s))
 
 
 def _to_camel(s: str) -> str:
@@ -20,44 +19,67 @@ def _to_camel(s: str) -> str:
     return parts[0] + "".join(w.capitalize() for w in parts[1:])
 
 
+class CamelModel(BaseModel):
+    """Base model that serializes to camelCase.
+
+    pytauri calls model_dump_json() without by_alias=True.
+    A model_serializer is used instead of overriding model_dump_json
+    because it is respected during nested serialization (e.g. inside RootModel).
+    """
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=_to_camel)
+
+    @model_serializer(mode="wrap")
+    def _serialize_camel(self, handler: Any) -> dict[str, Any]:
+        return {_to_camel(k): v for k, v in handler(self).items()}
+
+
 # --- Request models ---
 
 
-class TranslateRequest(BaseModel):
-    model_config = _camel_config()
+class TranslateRequest(CamelModel):
     text: str
     source_lang: str
     target_lang: str
 
 
-class ModelIdRequest(BaseModel):
-    model_config = _camel_config()
+class ModelIdRequest(CamelModel):
     model_id: str
 
 
-class DownloadProgress(BaseModel):
-    model_config = _camel_config()
+class DownloadProgress(CamelModel):
     progress: float
     message: str
 
 
-class DownloadModelRequest(BaseModel):
-    model_config = _camel_config()
+class DownloadModelRequest(CamelModel):
     model_id: str
+    on_progress: JavaScriptChannelId[DownloadProgress]
+
+
+class SynthesizeSpeechRequest(CamelModel):
+    text: str
+    language: str
+
+
+class TtsStatusResponse(CamelModel):
+    status: str
+    error: str | None = None
+
+
+class DownloadTtsModelRequest(CamelModel):
     on_progress: JavaScriptChannelId[DownloadProgress]
 
 
 # --- Response models ---
 
 
-class LanguageInfo(BaseModel):
-    model_config = _camel_config()
+class LanguageInfo(CamelModel):
     code: str
     name: str
 
 
-class ModelInfo(BaseModel):
-    model_config = _camel_config()
+class ModelInfo(CamelModel):
     id: str
     name: str
     repo_id: str
@@ -67,8 +89,7 @@ class ModelInfo(BaseModel):
     error: str | None = None
 
 
-class ModelStatusResponse(BaseModel):
-    model_config = _camel_config()
+class ModelStatusResponse(CamelModel):
     model_id: str
     status: str
     current_model_id: str | None = None
@@ -169,3 +190,50 @@ async def switch_model(body: ModelIdRequest) -> ModelStatusResponse:
         status=status.value,
         current_model_id=manager.get_current_model_id(),
     )
+
+
+# --- TTS Commands ---
+
+
+@commands.command()
+async def get_tts_status() -> TtsStatusResponse:
+    tts = TtsManager()
+    return TtsStatusResponse(
+        status=tts.get_status().value,
+        error=tts.get_error(),
+    )
+
+
+@commands.command()
+async def download_tts_model(
+    body: DownloadTtsModelRequest, webview_window: WebviewWindow
+) -> str:
+    tts = TtsManager()
+    channel = body.on_progress.channel_on(webview_window.as_ref_webview())
+
+    def progress_callback(progress: float, message: str) -> None:
+        channel.send_model(DownloadProgress(progress=progress, message=message))
+
+    await anyio.to_thread.run_sync(
+        lambda: tts.download_model(progress_callback)
+    )
+    return "ok"
+
+
+@commands.command()
+async def load_tts_model() -> TtsStatusResponse:
+    tts = TtsManager()
+    await anyio.to_thread.run_sync(lambda: tts.load_model())
+    return TtsStatusResponse(
+        status=tts.get_status().value,
+        error=tts.get_error(),
+    )
+
+
+@commands.command()
+async def synthesize_speech(body: SynthesizeSpeechRequest) -> str:
+    tts = TtsManager()
+    result = await anyio.to_thread.run_sync(
+        lambda: tts.synthesize(body.text, body.language)
+    )
+    return result

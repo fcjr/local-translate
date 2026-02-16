@@ -1,11 +1,14 @@
 [project]
 name = "workspace"
 version = "0.1.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.13"
 dependencies = []
 
 [dependency-groups]
 dev = ["local-translate"]
+
+[tool.uv]
+prerelease = "allow"
 
 [tool.uv.workspace]
 members = ["src-tauri"]

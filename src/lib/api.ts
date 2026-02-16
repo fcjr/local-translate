@@ -77,3 +77,35 @@ export async function switchModel(
 ): Promise<ModelStatusResponse> {
   return await pyInvoke<ModelStatusResponse>("switch_model", { modelId });
 }
+
+// --- TTS ---
+
+export interface TtsStatus {
+  status: string;
+  error: string | null;
+}
+
+export async function getTtsStatus(): Promise<TtsStatus> {
+  return await pyInvoke<TtsStatus>("get_tts_status");
+}
+
+export async function downloadTtsModel(
+  onProgress: (progress: DownloadProgress) => void
+): Promise<string> {
+  const channel = new Channel<DownloadProgress>();
+  channel.onmessage = onProgress;
+  return await pyInvoke<string>("download_tts_model", {
+    onProgress: channel,
+  });
+}
+
+export async function loadTtsModel(): Promise<TtsStatus> {
+  return await pyInvoke<TtsStatus>("load_tts_model");
+}
+
+export async function synthesizeSpeech(
+  text: string,
+  language: string
+): Promise<string> {
+  return await pyInvoke<string>("synthesize_speech", { text, language });
+}
