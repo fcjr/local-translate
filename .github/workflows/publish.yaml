@@ -131,6 +131,26 @@ jobs:
               --python=./src-tauri/pyembed/python/bin/python3 \
               ./src-tauri
 
+      - name: Strip unused packages from embedded Python
+        run: |
+          PY=./src-tauri/pyembed/python/bin/python3
+
+          # Remove packages not needed at runtime — these are transitive deps
+          # of librosa/transformers that our Qwen3-TTS code path never imports
+          uv pip uninstall --python="$PY" \
+              scipy scikit-learn numba llvmlite joblib \
+              pillow pip
+
+          # Remove tkinter/tcl/tk (not needed for headless Python backend)
+          rm -rf src-tauri/pyembed/python/lib/libtcl* \
+                 src-tauri/pyembed/python/lib/libtk* \
+                 src-tauri/pyembed/python/lib/tcl* \
+                 src-tauri/pyembed/python/lib/tk* \
+                 src-tauri/pyembed/python/lib/python*/lib-dynload/_tkinter*
+
+          # Clean up test dirs and bytecode caches
+          find src-tauri/pyembed -type d \( -name "test" -o -name "tests" -o -name "testing" -o -name "__pycache__" \) -exec rm -rf {} +
+
       # Set build environment variables, see:
       # <https://pytauri.github.io/pytauri/latest/usage/tutorial/build-standalone/#build-and-bundle>
 
@@ -158,10 +178,15 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
 
-          # Sign all native extensions and executables — Tauri only signs frameworks
-          # and sidecars, not .so/.dylib files or executables in bundled resources
-          find src-tauri/pyembed -type f \( -name "*.so" -o -name "*.dylib" -o -path "*/bin/python*" \) | while read -r file; do
-            codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$file"
+          # Sign all Mach-O binaries in the embedded Python distribution —
+          # Tauri only signs its own frameworks/sidecars, not bundled resources.
+          # Using `file` detection instead of name patterns to catch everything:
+          # executables (python3.12), dylibs (libpython, libtcl, libllvmlite, etc.),
+          # and extension modules (.so files from numpy, mlx, tokenizers, etc.)
+          find src-tauri/pyembed -type f | while read -r file; do
+            if file "$file" | grep -q "Mach-O"; then
+              codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$file"
+            fi
           done
 
       - name: Clean up signing keychain
