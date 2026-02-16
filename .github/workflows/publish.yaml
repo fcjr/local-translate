@@ -106,8 +106,8 @@ jobs:
       # - <https://gregoryszorc.com/docs/python-build-standalone/main/running.html#obtaining-distributions>
       - name: Download python-build-standalone
         env:
-          PYTHON_VERSION: "3.12.10" # must be <3.13 for mlx-audio compatibility
-          TAG: "20250828" # update this by yourself
+          PYTHON_VERSION: "3.12.12" # must be <3.13 for mlx-audio compatibility
+          TAG: "20260211"
           TARGET: ${{ matrix.target }}
         run: |
           url="https://github.com/astral-sh/python-build-standalone/releases/download/${TAG}/cpython-${PYTHON_VERSION}+${TAG}-${TARGET}-install_only_stripped.tar.gz"
