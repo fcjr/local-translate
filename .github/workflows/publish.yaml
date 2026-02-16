@@ -155,8 +155,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: app-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
-          releaseName: "App v__VERSION__"
+          tagName: v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
+          releaseName: "Local Translate v__VERSION__"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: false
           includeDebug: true # Optional, disable to speed up the build
@@ -172,7 +172,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download "app-v${{ needs.bump-version.outputs.version }}" \
+          gh release download "v${{ needs.bump-version.outputs.version }}" \
             --repo "${{ github.repository }}" \
             --pattern "*_aarch64.dmg" \
             --dir dmgs
@@ -193,7 +193,7 @@ jobs:
           cask "local-translate" do
             version "PLACEHOLDER_VERSION"
 
-            url "https://github.com/fcjr/local-translate/releases/download/app-v#{version}/Local.Translate_#{version}_aarch64.dmg"
+            url "https://github.com/fcjr/local-translate/releases/download/v#{version}/Local.Translate_#{version}_aarch64.dmg"
             sha256 "PLACEHOLDER_AARCH64_SHA"
 
             name "Local Translate"
@@ -208,7 +208,7 @@ jobs:
             livecheck do
               url :url
               strategy :github_latest
-              regex(/^app[._-]v?(\d+(?:\.\d+)+)$/i)
+              regex(/^v?(\d+(?:\.\d+)+)$/i)
             end
 
             zap trash: [
