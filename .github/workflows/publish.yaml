@@ -6,11 +6,6 @@ name: "publish"
 
 on:
   workflow_dispatch:
-    inputs:
-      release_version:
-        description: "Version to update Homebrew cask for (e.g. 0.1.0). Leave empty to run the build."
-        required: false
-        default: ""
 
 defaults:
   run:
@@ -18,7 +13,6 @@ defaults:
 
 jobs:
   publish-tauri:
-    if: inputs.release_version == ''
     permissions:
       contents: write # required for creating github releases
     strategy:
@@ -31,6 +25,8 @@ jobs:
             target: "aarch64-apple-darwin"
 
     runs-on: ${{ matrix.platform }}
+    outputs:
+      app-version: ${{ steps.tauri.outputs.appVersion }}
     steps:
       - uses: actions/checkout@v4
 
@@ -110,6 +106,7 @@ jobs:
           echo "RUSTFLAGS=$RUSTFLAGS" >> $GITHUB_ENV
 
       - name: Build and bundle the app
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -117,12 +114,12 @@ jobs:
           tagName: app-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
           releaseName: "App v__VERSION__"
           releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
+          releaseDraft: false
           includeDebug: true # Optional, disable to speed up the build
           args: '--target ${{ matrix.target }} --config src-tauri/tauri.bundle.json --verbose'
 
   update-homebrew-cask:
-    if: inputs.release_version != ''
+    needs: publish-tauri
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -131,7 +128,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download "app-v${{ inputs.release_version }}" \
+          gh release download "app-v${{ needs.publish-tauri.outputs.app-version }}" \
             --repo "${{ github.repository }}" \
             --pattern "*.dmg" \
             --dir dmgs
@@ -139,7 +136,7 @@ jobs:
       - name: Compute SHA256 hashes
         id: sha
         run: |
-          VERSION="${{ inputs.release_version }}"
+          VERSION="${{ needs.publish-tauri.outputs.app-version }}"
           AARCH64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_aarch64.dmg" | cut -d ' ' -f1)
           X64_SHA=$(sha256sum "dmgs/Local Translate_${VERSION}_x64.dmg" | cut -d ' ' -f1)
           echo "aarch64=$AARCH64_SHA" >> "$GITHUB_OUTPUT"
@@ -147,7 +144,7 @@ jobs:
 
       - name: Generate cask formula
         env:
-          VERSION: ${{ inputs.release_version }}
+          VERSION: ${{ needs.publish-tauri.outputs.app-version }}
           AARCH64_SHA: ${{ steps.sha.outputs.aarch64 }}
           X64_SHA: ${{ steps.sha.outputs.x64 }}
         run: |
@@ -201,7 +198,7 @@ jobs:
             --jq '.sha' 2>/dev/null || echo "")
 
           JSON_PAYLOAD=$(jq -n \
-            --arg message "Update local-translate to ${{ inputs.release_version }}" \
+            --arg message "Update local-translate to ${{ needs.publish-tauri.outputs.app-version }}" \
             --arg content "$CONTENT" \
             --arg sha "$EXISTING_SHA" \
             'if $sha == "" then {message: $message, content: $content} else {message: $message, content: $content, sha: $sha} end')
