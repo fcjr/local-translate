@@ -13,6 +13,8 @@
     ttsError?: string;
     readonly?: boolean;
     loading?: boolean;
+    notice?: string;
+    noticeProgress?: number;
     placeholder?: string;
     onlangchange: (code: string) => void;
     ontextchange?: (text: string) => void;
@@ -30,6 +32,8 @@
     ttsError = "",
     readonly = false,
     loading = false,
+    notice = "",
+    noticeProgress = -1,
     placeholder = "",
     onlangchange,
     ontextchange,
@@ -159,6 +163,18 @@
         <div class="spinner"></div>
         <span>Translating...</span>
       </div>
+    {:else if notice && !text}
+      <div class="notice-overlay">
+        <div class="notice-card">
+          <div class="notice-spinner"></div>
+          <span class="notice-text">{notice}</span>
+          {#if noticeProgress >= 0 && noticeProgress < 1}
+            <div class="notice-progress">
+              <div class="notice-progress-fill" style="width: {noticeProgress * 100}%"></div>
+            </div>
+          {/if}
+        </div>
+      </div>
     {/if}
   </div>
 </div>
@@ -257,6 +273,56 @@
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
+  }
+
+  .notice-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  .notice-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 24px 32px;
+    border-radius: 12px;
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid rgba(99, 102, 241, 0.12);
+  }
+
+  .notice-spinner {
+    width: 28px;
+    height: 28px;
+    border: 2.5px solid rgba(99, 102, 241, 0.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+
+  .notice-text {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .notice-progress {
+    width: 140px;
+    height: 4px;
+    background: rgba(99, 102, 241, 0.12);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .notice-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.3s;
   }
 
   @keyframes spin {

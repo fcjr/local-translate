@@ -60,6 +60,10 @@
 
   let translateTimer: ReturnType<typeof setTimeout> | null = null;
 
+  let targetNotice = $derived(
+    !currentModelId && statusType === "loading" ? statusMessage : ""
+  );
+
   // Download progress for status bar (0-1)
   let initDownloadProgress = $state(0);
 
@@ -82,6 +86,7 @@
       // Check if any model is already ready (hot restart)
       if (currentModelId) {
         setStatus("ready", "Ready");
+        if (sourceText.trim()) doTranslate();
         initTts();
         return;
       }
@@ -115,6 +120,7 @@
       await loadModel(targetModelId);
       await refreshModels();
       setStatus("ready", "Ready");
+      if (sourceText.trim()) doTranslate();
       initTts();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -302,6 +308,8 @@
     {ttsError}
     readonly
     loading={translating}
+    notice={targetNotice}
+    noticeProgress={initDownloadProgress > 0 ? initDownloadProgress : -1}
     placeholder="Translation will appear here..."
     onlangchange={handleTargetLangChange}
     ontogglefavorite={toggleFavorite}
