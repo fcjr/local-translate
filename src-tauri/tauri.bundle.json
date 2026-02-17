@@ -5,6 +5,7 @@
       "app",
       "dmg"
     ],
+    "createUpdaterArtifacts": true,
     "resources": {
       "pyembed/python/": ""
     }

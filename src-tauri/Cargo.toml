@@ -24,3 +24,5 @@ serde_json = "1"
 pyo3 = { version = "0.25" }
 pytauri = { version = "0.8", features = [] }
 tauri-plugin-pytauri = { version = "0.8" }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

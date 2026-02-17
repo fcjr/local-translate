@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { check } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import TranslatePanel from "./lib/TranslatePanel.svelte";
   import Settings from "./lib/Settings.svelte";
   import {
@@ -78,6 +80,33 @@
   let ttsStatusMessage = $state("");
   let ttsError = $state("");
 
+  // Auto-update state
+  let updateAvailable: { version: string; install: () => Promise<void> } | null = $state(null);
+  let updateInstalling = $state(false);
+
+  async function checkForUpdates() {
+    try {
+      const update = await check();
+      if (update) {
+        updateAvailable = {
+          version: update.version,
+          install: async () => {
+            updateInstalling = true;
+            try {
+              await update.downloadAndInstall();
+              await relaunch();
+            } catch (e) {
+              console.error("Update install failed:", e);
+              updateInstalling = false;
+            }
+          },
+        };
+      }
+    } catch (e) {
+      console.error("Update check failed:", e);
+    }
+  }
+
   onMount(async () => {
     try {
       languages = await listLanguages();
@@ -88,6 +117,7 @@
         setStatus("ready", "Ready");
         if (sourceText.trim()) doTranslate();
         initTts();
+        checkForUpdates();
         return;
       }
 
@@ -122,6 +152,7 @@
       setStatus("ready", "Ready");
       if (sourceText.trim()) doTranslate();
       initTts();
+      checkForUpdates();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus("error", msg);
@@ -324,6 +355,15 @@
     </div>
   {/if}
   <span class="status-text">{ttsStatusMessage || statusMessage}</span>
+  {#if updateAvailable}
+    <button class="update-banner" onclick={updateAvailable.install} disabled={updateInstalling}>
+      {#if updateInstalling}
+        Installing update...
+      {:else}
+        Update v{updateAvailable.version} available — click to install
+      {/if}
+    </button>
+  {/if}
   {#if currentModelId}
     <span class="status-model">TranslateGemma {currentModelId.toUpperCase()}</span>
   {/if}
@@ -337,9 +377,12 @@
   downloadProgress={settingsDownloadProgress}
   downloadMessage={settingsDownloadMessage}
   downloadError={settingsDownloadError}
+  {updateAvailable}
+  {updateInstalling}
   onclose={() => (settingsOpen = false)}
   onmodelschange={refreshModels}
   ondownload={handleSettingsDownload}
+  oncheckupdate={checkForUpdates}
 />
 
 <style>
@@ -501,6 +544,28 @@
   .status-model {
     color: #888;
     flex-shrink: 0;
+  }
+
+  .update-banner {
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .update-banner:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: rgba(99, 102, 241, 0.5);
+  }
+
+  .update-banner:disabled {
+    opacity: 0.7;
+    cursor: default;
   }
 
   /* Responsive */

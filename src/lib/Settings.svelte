@@ -17,13 +17,25 @@
     downloadProgress: number;
     downloadMessage: string;
     downloadError: string | null;
+    updateAvailable: { version: string; install: () => Promise<void> } | null;
+    updateInstalling: boolean;
     onclose: () => void;
     onmodelschange: () => void;
     ondownload: (modelId: string) => void;
+    oncheckupdate: () => void;
   }
 
-  let { open, models, currentModelId, downloadingId, downloadProgress, downloadMessage, downloadError, onclose, onmodelschange, ondownload }: Props =
+  let { open, models, currentModelId, downloadingId, downloadProgress, downloadMessage, downloadError, updateAvailable, updateInstalling, onclose, onmodelschange, ondownload, oncheckupdate }: Props =
     $props();
+
+  let updateChecking = $state(false);
+
+  async function handleCheckUpdate() {
+    updateChecking = true;
+    oncheckupdate();
+    // Give it a moment so the user sees feedback
+    setTimeout(() => { updateChecking = false; }, 2000);
+  }
 
   let loadingId: string | null = $state(null);
   let deletingId: string | null = $state(null);
@@ -203,6 +215,45 @@
           </div>
         </div>
       {/each}
+
+      <h3 class="section-title">Updates</h3>
+      {#if updateAvailable}
+        <div class="update-card">
+          <div class="update-info">
+            <span class="update-version">v{updateAvailable.version} available</span>
+          </div>
+          <button
+            class="update-btn"
+            onclick={updateAvailable.install}
+            disabled={updateInstalling}
+          >
+            {#if updateInstalling}
+              Installing...
+            {:else}
+              Install & Restart
+            {/if}
+          </button>
+        </div>
+      {:else}
+        <div class="update-card">
+          <div class="update-info">
+            <span class="update-status">
+              {#if updateChecking}
+                Checking...
+              {:else}
+                No updates available
+              {/if}
+            </span>
+          </div>
+          <button
+            class="update-btn update-btn-secondary"
+            onclick={handleCheckUpdate}
+            disabled={updateChecking}
+          >
+            Check Now
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -443,5 +494,73 @@
   .error-text {
     font-size: 12px;
     color: #ef4444;
+  }
+
+  .section-title {
+    margin: 24px 0 12px 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .update-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .update-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .update-version {
+    font-weight: 600;
+    font-size: 14px;
+    color: #818cf8;
+  }
+
+  .update-status {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .update-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .update-btn:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: rgba(99, 102, 241, 0.5);
+  }
+
+  .update-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .update-btn-secondary {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--border);
+    color: var(--text-secondary);
+  }
+
+  .update-btn-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: var(--text);
   }
 </style>
