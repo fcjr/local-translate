@@ -180,7 +180,7 @@
                 <button
                   class="icon-btn icon-btn-primary"
                   onclick={() => handleLoad(model.id)}
-                  disabled={loadingId !== null || downloadingId !== null || deletingId !== null}
+                  disabled={loadingId !== null || deletingId !== null}
                   title={model.status === "ready" ? "Switch to this model" : "Load model"}
                 >
                   <PowerIcon size={16} weight="fill" />
@@ -188,7 +188,7 @@
                 <button
                   class="icon-btn icon-btn-danger"
                   onclick={() => handleDeleteClick(model.id)}
-                  disabled={loadingId !== null || downloadingId !== null || deletingId !== null}
+                  disabled={loadingId !== null || deletingId !== null}
                   title="Delete model"
                 >
                   <TrashIcon size={16} />
