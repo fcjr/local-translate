@@ -204,6 +204,11 @@ class TtsManager:
 
                 completed_bytes = [0]
 
+                # Track bytes ourselves instead of relying on tqdm's
+                # self.n, which stays at 0 when tqdm is internally
+                # disabled (e.g. no tty in a bundled .app).
+                file_bytes = [0]
+
                 class _ByteTqdm(_tqdm_base):  # type: ignore[type-arg]
                     """Reports byte-level download progress via callback."""
 
@@ -212,6 +217,7 @@ class TtsManager:
                     def __init__(self, *args: Any, **kwargs: Any) -> None:
                         kwargs.pop("name", None)
                         kwargs["disable"] = False
+                        file_bytes[0] = 0
                         super().__init__(*args, **kwargs)
 
                     def display(self, *args: object, **kwargs: object) -> None:
@@ -219,10 +225,12 @@ class TtsManager:
 
                     def update(self, n: float | None = 1) -> bool | None:
                         result = super().update(n)
+                        if n:
+                            file_bytes[0] += int(n)
                         now = time.monotonic()
                         if now - _ByteTqdm._last_report >= 0.1:
                             _ByteTqdm._last_report = now
-                            current = completed_bytes[0] + self.n
+                            current = completed_bytes[0] + file_bytes[0]
                             progress = min(current / total_size, 0.99)
                             downloaded_gb = current / 1e9
                             total_gb = total_size / 1e9
