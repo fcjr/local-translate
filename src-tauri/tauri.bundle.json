@@ -7,7 +7,8 @@
     ],
     "createUpdaterArtifacts": true,
     "resources": {
-      "pyembed/python/": ""
+      "pyembed/python/": "",
+      "Credits.html": ""
     }
   }
 }

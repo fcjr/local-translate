@@ -5,7 +5,10 @@ requires-python = ">=3.10,<3.13"
 dependencies = []
 
 [dependency-groups]
-dev = ["local-translate"]
+dev = [
+    "local-translate",
+    "pip-licenses>=5.5.1",
+]
 
 [tool.uv]
 prerelease = "allow"

@@ -195,6 +195,12 @@ jobs:
           security delete-keychain $RUNNER_TEMP/signing.keychain-db 2>/dev/null || true
           rm -f $RUNNER_TEMP/certificate.p12
 
+      - name: Generate Credits.html
+        run: |
+          cargo install cargo-about
+          uv sync
+          pnpm generate:credits
+
       - name: Set build environment variables
         run: |
           PYO3_PYTHON=$(realpath ./src-tauri/pyembed/python/bin/python3)

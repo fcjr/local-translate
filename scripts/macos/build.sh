@@ -36,4 +36,5 @@ rm -rf src-tauri/pyembed/python/lib/libtcl* \
 # Clean up test dirs and bytecode caches
 find src-tauri/pyembed -type d \( -name "test" -o -name "tests" -o -name "testing" -o -name "__pycache__" \) -exec rm -rf {} +
 
+pnpm generate:credits
 pnpm tauri build --config="src-tauri/tauri.bundle.json" -- --profile bundle-release
