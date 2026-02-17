@@ -24,9 +24,12 @@ def _respond(obj: dict) -> None:
 
 
 def main() -> None:
-    # Redirect stdout → /dev/null so library prints don't corrupt the JSON protocol.
-    _devnull = open(os.devnull, "w")
-    sys.stdout = _devnull
+    # Redirect fd 1 → /dev/null so C-level writes from Metal/MLX libraries
+    # can't corrupt the JSON pipe.  _json_out still writes via the dup'd fd.
+    _devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(_devnull_fd, 1)
+    os.close(_devnull_fd)
+    sys.stdout = open(os.devnull, "w")
 
     try:
         import numpy as np

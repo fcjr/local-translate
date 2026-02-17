@@ -45,20 +45,22 @@
     "zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it",
   ]);
 
-  type TtsState = "idle" | "loading" | "playing";
+  type TtsState = "idle" | "loading" | "playing" | "error";
   let ttsState: TtsState = $state("idle");
+  let ttsErrorMsg = $state("");
   let currentAudio: HTMLAudioElement | null = null;
   let currentAudioUrl: string | null = null;
 
   let langSupported = $derived(TTS_SUPPORTED_LANGS.has(lang));
 
   let ttsDisabled = $derived(
-    !ttsReady || !langSupported || !text.trim() || ttsState === "loading"
+    !ttsReady || !langSupported || !text.trim() || ttsState === "loading" || ttsState === "error"
   );
 
   let ttsTooltip = $derived.by(() => {
     if (ttsState === "playing") return "Stop playback";
     if (ttsState === "loading") return "Generating speech...";
+    if (ttsState === "error") return `Speech failed: ${ttsErrorMsg}`;
     if (ttsError) return `TTS unavailable: ${ttsError}`;
     if (!ttsReady) return "TTS model is loading...";
     if (!langSupported) {
@@ -102,8 +104,12 @@
         ttsState = "idle";
       };
       audio.play();
-    } catch {
-      ttsState = "idle";
+    } catch (e: unknown) {
+      ttsErrorMsg = e instanceof Error ? e.message : "Speech synthesis failed";
+      ttsState = "error";
+      setTimeout(() => {
+        if (ttsState === "error") ttsState = "idle";
+      }, 3000);
     }
   }
 
@@ -127,11 +133,18 @@
     <button
       class="tts-btn"
       class:playing={ttsState === "playing"}
+      class:error={ttsState === "error"}
       disabled={ttsDisabled && ttsState !== "playing"}
       title={ttsTooltip}
       onclick={handleTtsClick}
     >
-      {#if ttsState === "loading"}
+      {#if ttsState === "error"}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="15" y1="9" x2="9" y2="15"></line>
+          <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+      {:else if ttsState === "loading"}
         <svg class="tts-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="12"></circle>
         </svg>
@@ -221,6 +234,11 @@
 
   .tts-btn.playing {
     color: var(--accent, #6366f1);
+  }
+
+  .tts-btn.error {
+    color: #f87171;
+    opacity: 1;
   }
 
   .tts-spinner {

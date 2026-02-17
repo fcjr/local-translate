@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import subprocess
 import threading
 from enum import Enum
@@ -59,6 +60,7 @@ class TtsManager:
         self._initialized = True
         self._worker: subprocess.Popen | None = None  # type: ignore[type-arg]
         self._cmd_lock = threading.Lock()
+        self._resp_queue: queue.Queue[str | None] = queue.Queue()
         self._status: TtsStatus = TtsStatus.NOT_DOWNLOADED
         self._error: str | None = None
         self._model_path: str | None = None
@@ -82,38 +84,97 @@ class TtsManager:
     def is_language_supported(self, lang_code: str) -> bool:
         return lang_code in TTS_LANGUAGE_MAP
 
-    def _send_worker_cmd(self, cmd: dict) -> dict:
+    def _kill_worker(self) -> None:
+        """Kill the worker and reset status so it can be restarted."""
+        w = self._worker
+        if w is not None:
+            self._worker = None
+            try:
+                w.kill()
+                w.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            for pipe in (w.stdin, w.stdout, w.stderr):
+                if pipe:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
+        if self._status in (TtsStatus.READY, TtsStatus.LOADING):
+            self._status = TtsStatus.DOWNLOADED
+
+    def _start_reader(self) -> None:
+        """Spawn a daemon thread that continuously reads worker stdout.
+
+        The thread discards non-JSON lines (C/Metal library noise) and
+        enqueues valid JSON lines for ``_send_worker_cmd`` to consume.
+        This keeps the pipe drained so the worker never blocks on writes.
+
+        A fresh queue is created each time so old reader threads (still
+        draining a dead worker's pipe) cannot poison the new worker.
+        """
+        self._resp_queue = queue.Queue()
+        worker = self._worker
+        q = self._resp_queue
+
+        def _reader() -> None:
+            assert worker is not None and worker.stdout is not None
+            try:
+                for raw_line in worker.stdout:
+                    line = raw_line.rstrip("\n")
+                    if not line:
+                        continue
+                    # C/Metal libraries may write to fd 1 without a
+                    # trailing newline, so their output gets prepended
+                    # to the next JSON line.  Find the first '{' and
+                    # try to parse from there.
+                    start = line.find("{")
+                    if start < 0:
+                        continue  # pure non-JSON noise
+                    try:
+                        obj = json.loads(line[start:])
+                        q.put(json.dumps(obj))
+                    except json.JSONDecodeError:
+                        pass  # still not valid JSON — discard
+            except (ValueError, OSError):
+                pass  # pipe closed
+            finally:
+                q.put(None)  # EOF sentinel
+
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+
+    def _send_worker_cmd(self, cmd: dict, timeout: float = 120) -> dict:
         with self._cmd_lock:
             worker = self._worker
-            if worker is None or worker.stdin is None or worker.stdout is None:
+            if worker is None or worker.stdin is None:
                 raise RuntimeError("TTS worker process is not running")
             try:
                 worker.stdin.write(json.dumps(cmd) + "\n")
                 worker.stdin.flush()
             except BrokenPipeError:
-                # Worker already exited — try to read any fatal message it left
-                resp_line = worker.stdout.readline() if worker.stdout else ""
-                if resp_line:
-                    resp = json.loads(resp_line)
-                    raise RuntimeError(resp.get("message", "TTS worker crashed"))
-                raise RuntimeError("TTS worker process crashed before receiving command")
-            resp_line = worker.stdout.readline()
-            if not resp_line:
+                self._kill_worker()
+                raise RuntimeError(
+                    "TTS worker process crashed before receiving command"
+                )
+            try:
+                resp_line = self._resp_queue.get(timeout=timeout)
+            except queue.Empty:
+                self._kill_worker()
+                raise RuntimeError(
+                    f"TTS worker did not respond within {int(timeout)}s"
+                )
+            if resp_line is None:
+                self._kill_worker()
                 raise RuntimeError("TTS worker process exited unexpectedly")
             resp = json.loads(resp_line)
             if resp.get("status") == "fatal":
+                self._kill_worker()
                 raise RuntimeError(resp.get("message", "TTS worker fatal error"))
             return resp
 
     def _stop_worker(self) -> None:
-        if self._worker is not None:
-            try:
-                self._worker.stdin.write(json.dumps({"cmd": "quit"}) + "\n")  # type: ignore[union-attr]
-                self._worker.stdin.flush()  # type: ignore[union-attr]
-                self._worker.wait(timeout=5)
-            except Exception:
-                self._worker.kill()
-            self._worker = None
+        self._kill_worker()
 
     def download_model(
         self,
@@ -204,7 +265,7 @@ class TtsManager:
             raise
 
     def load_model(self) -> None:
-        if self._status not in (TtsStatus.DOWNLOADED, TtsStatus.READY):
+        if self._status not in (TtsStatus.DOWNLOADED, TtsStatus.READY, TtsStatus.ERROR):
             raise RuntimeError("TTS model is not downloaded yet")
 
         self._status = TtsStatus.LOADING
@@ -225,8 +286,11 @@ class TtsManager:
                 stderr=subprocess.DEVNULL,
                 text=True,
             )
+            self._start_reader()
 
-            resp = self._send_worker_cmd({"cmd": "load", "model_path": model_dir})
+            resp = self._send_worker_cmd(
+                {"cmd": "load", "model_path": model_dir}, timeout=300
+            )
             if resp.get("status") != "ok":
                 raise RuntimeError(resp.get("message", "TTS worker failed to load model"))
 
@@ -238,9 +302,14 @@ class TtsManager:
             raise
 
     def synthesize(self, text: str, language: str) -> str:
-        """Synthesize speech from text. Returns base64-encoded WAV string."""
-        if self._worker is None or self._status != TtsStatus.READY:
-            raise RuntimeError("TTS model is not loaded")
+        """Synthesize speech from text. Returns base64-encoded WAV string.
+
+        The worker is restarted after every synthesis because
+        ``model.generate()`` in mlx-audio hangs on the second invocation
+        within the same process (likely a Metal/MLX state issue).
+        """
+        # (Re-)start a fresh worker for every call.
+        self.load_model()
 
         tts_lang = TTS_LANGUAGE_MAP.get(language, "auto")
         voice = TTS_VOICE_MAP.get(language)
@@ -253,7 +322,7 @@ class TtsManager:
         if voice:
             cmd["voice"] = voice
 
-        resp = self._send_worker_cmd(cmd)
+        resp = self._send_worker_cmd(cmd, timeout=120)
         if resp.get("status") != "ok":
             raise RuntimeError(resp.get("message", "TTS synthesis failed"))
 
