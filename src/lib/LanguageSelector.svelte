@@ -33,7 +33,7 @@
   );
 
   let allLangs = $derived(
-    languages.filter((l) => !favorites.includes(l.code))
+    languages.filter((l) => !favorites.includes(l.code) && !recents.includes(l.code))
   );
 
   let filteredAll = $derived(
