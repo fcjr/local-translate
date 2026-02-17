@@ -72,6 +72,12 @@ export async function loadModel(
   return await pyInvoke<ModelStatusResponse>("load_model", { modelId });
 }
 
+export async function deleteModel(
+  modelId: string
+): Promise<ModelStatusResponse> {
+  return await pyInvoke<ModelStatusResponse>("delete_model", { modelId });
+}
+
 export async function switchModel(
   modelId: string
 ): Promise<ModelStatusResponse> {

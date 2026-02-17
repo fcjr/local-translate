@@ -179,6 +179,18 @@ async def load_model(body: ModelIdRequest) -> ModelStatusResponse:
 
 
 @commands.command()
+async def delete_model(body: ModelIdRequest) -> ModelStatusResponse:
+    manager = ModelManager()
+    await anyio.to_thread.run_sync(lambda: manager.delete_model(body.model_id))
+    status = manager.get_status(body.model_id)
+    return ModelStatusResponse(
+        model_id=body.model_id,
+        status=status.value,
+        current_model_id=manager.get_current_model_id(),
+    )
+
+
+@commands.command()
 async def switch_model(body: ModelIdRequest) -> ModelStatusResponse:
     manager = ModelManager()
     if manager.get_status(body.model_id) == ModelStatus.NOT_DOWNLOADED:

@@ -5,7 +5,7 @@ import subprocess
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from local_translate._python import find_python
 
@@ -129,33 +129,66 @@ class TtsManager:
                 progress_callback(0.0, "Fetching TTS model info...")
 
             api = HfApi()
-            info = api.repo_info(DEFAULT_MODEL_REPO)
+            info = api.repo_info(DEFAULT_MODEL_REPO, timeout=30, files_metadata=True)
             files = [
                 (s.rfilename, s.size)
                 for s in (info.siblings or [])
             ]
-            total_files = len(files)
             total_size = sum(s for _, s in files if s)
-            downloaded_size = 0
 
-            for i, (filename, size) in enumerate(files):
-                hf_hub_download(repo_id=DEFAULT_MODEL_REPO, filename=filename)
-                if progress_callback:
-                    if total_size > 0 and size:
-                        downloaded_size += size
-                        progress = min(downloaded_size / total_size, 0.99)
-                        downloaded_gb = downloaded_size / 1e9
+            if progress_callback and total_size > 0:
+                import time
+
+                from tqdm.auto import tqdm as _tqdm_base
+
+                completed_bytes = [0]
+
+                class _ByteTqdm(_tqdm_base):  # type: ignore[type-arg]
+                    """Reports byte-level download progress via callback."""
+
+                    _last_report = 0.0
+
+                    def __init__(self, *args: Any, **kwargs: Any) -> None:
+                        kwargs.pop("name", None)
+                        kwargs["disable"] = False
+                        super().__init__(*args, **kwargs)
+
+                    def display(self, *args: object, **kwargs: object) -> None:
+                        pass
+
+                    def update(self, n: float | None = 1) -> bool | None:
+                        result = super().update(n)
+                        now = time.monotonic()
+                        if now - _ByteTqdm._last_report >= 0.1:
+                            _ByteTqdm._last_report = now
+                            current = completed_bytes[0] + self.n
+                            progress = min(current / total_size, 0.99)
+                            downloaded_gb = current / 1e9
+                            total_gb = total_size / 1e9
+                            progress_callback(  # type: ignore[misc]
+                                progress,
+                                f"Downloading TTS... {downloaded_gb:.1f}/{total_gb:.1f} GB",
+                            )
+                        return result
+
+                for filename, size in files:
+                    hf_hub_download(
+                        repo_id=DEFAULT_MODEL_REPO,
+                        filename=filename,
+                        tqdm_class=_ByteTqdm,
+                    )
+                    if size:
+                        completed_bytes[0] += size
+                        progress = min(completed_bytes[0] / total_size, 0.99)
+                        downloaded_gb = completed_bytes[0] / 1e9
                         total_gb = total_size / 1e9
                         progress_callback(
                             progress,
                             f"Downloading TTS... {downloaded_gb:.1f}/{total_gb:.1f} GB",
                         )
-                    else:
-                        progress = min((i + 1) / total_files, 0.99)
-                        progress_callback(
-                            progress,
-                            f"Downloading TTS file {i + 1}/{total_files}...",
-                        )
+            else:
+                for filename, _ in files:
+                    hf_hub_download(repo_id=DEFAULT_MODEL_REPO, filename=filename)
 
             self._model_path = snapshot_download(
                 DEFAULT_MODEL_REPO, local_files_only=True

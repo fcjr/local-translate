@@ -5,9 +5,40 @@ import subprocess
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from local_translate._python import find_python
+
+def _safetensors_complete(model_dir: Path) -> bool:
+    """Check that all expected safetensors weight files are present.
+
+    Supports three layouts:
+    1. Index file (``model.safetensors.index.json``) — verify every listed shard.
+    2. Sharded without index (``model-XXXXX-of-NNNNN.safetensors``) — parse the
+       total from the filename pattern and verify all shards exist.
+    3. Single-file model — just needs at least one safetensors file.
+    """
+    import re
+
+    index_file = model_dir / "model.safetensors.index.json"
+    if index_file.exists():
+        with open(index_file) as f:
+            index = json.load(f)
+        shard_files = set(index.get("weight_map", {}).values())
+        return all((model_dir / name).exists() for name in shard_files)
+
+    # Check for sharded naming pattern: model-00001-of-00003.safetensors
+    shard_files = sorted(model_dir.glob("model-*-of-*.safetensors"))
+    if shard_files:
+        # Parse total shard count from any filename
+        m = re.search(r"-of-(\d+)\.safetensors$", shard_files[0].name)
+        if m:
+            expected = int(m.group(1))
+            return len(shard_files) == expected
+
+    # Single-file model — just needs at least one safetensors file
+    return any(model_dir.glob("*.safetensors"))
+
 
 AVAILABLE_MODELS: dict[str, dict[str, str | int | float]] = {
     "4b": {
@@ -69,6 +100,12 @@ class ModelManager:
                 path = snapshot_download(
                     str(info["repo_id"]), local_files_only=True
                 )
+                # Verify the snapshot actually contains all model weights.
+                # An interrupted download can leave metadata or only some
+                # shard files, causing mlx_lm.load() to fail.
+                if not _safetensors_complete(Path(path)):
+                    self._status[model_id] = ModelStatus.NOT_DOWNLOADED
+                    continue
                 self._model_paths[model_id] = path
                 self._status[model_id] = ModelStatus.DOWNLOADED
             except Exception:
@@ -115,6 +152,35 @@ class ModelManager:
                 self._worker.kill()
             self._worker = None
 
+    def delete_model(self, model_id: str) -> None:
+        if model_id not in AVAILABLE_MODELS:
+            raise ValueError(f"Unknown model: {model_id}")
+
+        if model_id == self._current_model_id:
+            raise RuntimeError("Cannot delete the currently loaded model")
+
+        if self.get_status(model_id) == ModelStatus.NOT_DOWNLOADED:
+            raise RuntimeError(f"Model {model_id} is not downloaded")
+
+        repo_id = str(AVAILABLE_MODELS[model_id]["repo_id"])
+
+        from huggingface_hub import scan_cache_dir
+
+        cache_info = scan_cache_dir()
+        revisions_to_delete = []
+        for repo_info in cache_info.repos:
+            if repo_info.repo_id == repo_id:
+                for revision in repo_info.revisions:
+                    revisions_to_delete.append(revision.commit_hash)
+
+        if revisions_to_delete:
+            strategy = cache_info.delete_revisions(*revisions_to_delete)
+            strategy.execute()
+
+        self._status[model_id] = ModelStatus.NOT_DOWNLOADED
+        self._model_paths.pop(model_id, None)
+        self._error.pop(model_id, None)
+
     def download_model(
         self,
         model_id: str,
@@ -135,33 +201,66 @@ class ModelManager:
                 progress_callback(0.0, "Fetching model info...")
 
             api = HfApi()
-            info = api.repo_info(repo_id)
+            info = api.repo_info(repo_id, timeout=30, files_metadata=True)
             files = [
                 (s.rfilename, s.size)
                 for s in (info.siblings or [])
             ]
-            total_files = len(files)
             total_size = sum(s for _, s in files if s)
-            downloaded_size = 0
 
-            for i, (filename, size) in enumerate(files):
-                hf_hub_download(repo_id=repo_id, filename=filename)
-                if progress_callback:
-                    if total_size > 0 and size:
-                        downloaded_size += size
-                        progress = min(downloaded_size / total_size, 0.99)
-                        downloaded_gb = downloaded_size / 1e9
+            if progress_callback and total_size > 0:
+                import time
+
+                from tqdm.auto import tqdm as _tqdm_base
+
+                completed_bytes = [0]
+
+                class _ByteTqdm(_tqdm_base):  # type: ignore[type-arg]
+                    """Reports byte-level download progress via callback."""
+
+                    _last_report = 0.0
+
+                    def __init__(self, *args: Any, **kwargs: Any) -> None:
+                        kwargs.pop("name", None)
+                        kwargs["disable"] = False
+                        super().__init__(*args, **kwargs)
+
+                    def display(self, *args: object, **kwargs: object) -> None:
+                        pass
+
+                    def update(self, n: float | None = 1) -> bool | None:
+                        result = super().update(n)
+                        now = time.monotonic()
+                        if now - _ByteTqdm._last_report >= 0.1:
+                            _ByteTqdm._last_report = now
+                            current = completed_bytes[0] + self.n
+                            progress = min(current / total_size, 0.99)
+                            downloaded_gb = current / 1e9
+                            total_gb = total_size / 1e9
+                            progress_callback(  # type: ignore[misc]
+                                progress,
+                                f"Downloading... {downloaded_gb:.1f}/{total_gb:.1f} GB",
+                            )
+                        return result
+
+                for filename, size in files:
+                    hf_hub_download(
+                        repo_id=repo_id,
+                        filename=filename,
+                        tqdm_class=_ByteTqdm,
+                    )
+                    if size:
+                        completed_bytes[0] += size
+                        progress = min(completed_bytes[0] / total_size, 0.99)
+                        downloaded_gb = completed_bytes[0] / 1e9
                         total_gb = total_size / 1e9
                         progress_callback(
                             progress,
                             f"Downloading... {downloaded_gb:.1f}/{total_gb:.1f} GB",
                         )
-                    else:
-                        progress = min((i + 1) / total_files, 0.99)
-                        progress_callback(
-                            progress,
-                            f"Downloading file {i + 1}/{total_files}...",
-                        )
+            else:
+                for filename, _ in files:
+                    hf_hub_download(repo_id=repo_id, filename=filename)
 
             model_path = snapshot_download(repo_id, local_files_only=True)
             self._model_paths[model_id] = model_path
@@ -186,6 +285,15 @@ class ModelManager:
 
         try:
             model_dir = self._model_paths[model_id]
+
+            # Guard against corrupt/incomplete cache missing weight files.
+            if not _safetensors_complete(Path(model_dir)):
+                self._model_paths.pop(model_id, None)
+                self._status[model_id] = ModelStatus.NOT_DOWNLOADED
+                raise RuntimeError(
+                    f"Model {model_id} cache is incomplete (missing safetensors shards). "
+                    "Please re-download the model."
+                )
 
             # Stop existing worker if switching models
             if self._current_model_id and self._current_model_id != model_id:

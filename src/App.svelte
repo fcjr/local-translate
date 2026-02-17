@@ -60,12 +60,14 @@
 
   let translateTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // First-launch flow state
-  let initializing = $state(true);
-  let initDownloading = $state(false);
+  // Download progress for status bar (0-1)
   let initDownloadProgress = $state(0);
-  let initDownloadMessage = $state("");
-  let initLoading = $state(false);
+
+  // Settings model download state (lives here so closing Settings doesn't lose it)
+  let settingsDownloadingId: string | null = $state(null);
+  let settingsDownloadProgress: number = $state(0);
+  let settingsDownloadMessage: string = $state("");
+  let settingsDownloadError: string | null = $state(null);
 
   // TTS state
   let ttsReady = $state(false);
@@ -77,49 +79,46 @@
       languages = await listLanguages();
       await refreshModels();
 
-      // Check if any model is ready
+      // Check if any model is already ready (hot restart)
       if (currentModelId) {
         setStatus("ready", "Ready");
-        initializing = false;
         initTts();
         return;
       }
 
-      // Check if default model is downloaded but not loaded
-      const defaultModel = models.find((m) => m.id === "4b");
-      if (defaultModel && defaultModel.status === "downloaded") {
-        setStatus("loading", "Loading model...");
-        initLoading = true;
-        await loadModel("4b");
-        await refreshModels();
-        initLoading = false;
-        setStatus("ready", "Ready");
-        initializing = false;
-        initTts();
-        return;
+      // Determine which model to load
+      const lastModelId = localStorage.getItem("lt-last-model") ?? "4b";
+      const lastModel = models.find((m) => m.id === lastModelId);
+      const anyDownloaded = models.find((m) => m.status === "downloaded");
+
+      let targetModelId: string;
+      if (lastModel && lastModel.status === "downloaded") {
+        targetModelId = lastModelId;
+      } else if (anyDownloaded) {
+        targetModelId = anyDownloaded.id;
+      } else {
+        // Need to download the default model
+        const fallbackId = "4b";
+        const fallbackName = models.find((m) => m.id === fallbackId)?.name ?? "TranslateGemma 4B";
+        setStatus("loading", `Downloading ${fallbackName}...`);
+        initDownloadProgress = 0;
+        await downloadModel(fallbackId, (p: DownloadProgress) => {
+          initDownloadProgress = p.progress;
+          statusMessage = p.message || `Downloading ${fallbackName}... ${Math.round(p.progress * 100)}%`;
+        });
+        initDownloadProgress = 0;
+        targetModelId = fallbackId;
       }
 
-      // Need to download
-      setStatus("loading", "Downloading model...");
-      initDownloading = true;
-      await downloadModel("4b", (p: DownloadProgress) => {
-        initDownloadProgress = p.progress;
-        initDownloadMessage = p.message;
-      });
-      initDownloading = false;
-
-      setStatus("loading", "Loading model...");
-      initLoading = true;
-      await loadModel("4b");
+      const targetName = models.find((m) => m.id === targetModelId)?.name ?? targetModelId;
+      setStatus("loading", `Loading ${targetName}...`);
+      await loadModel(targetModelId);
       await refreshModels();
-      initLoading = false;
       setStatus("ready", "Ready");
-      initializing = false;
       initTts();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus("error", msg);
-      initializing = false;
     }
   });
 
@@ -156,10 +155,42 @@
     }
   }
 
+  function saveLastModel(modelId: string) {
+    localStorage.setItem("lt-last-model", modelId);
+  }
+
   async function refreshModels() {
     models = await listModels();
-    const status = await getModelStatus("4b");
+    const status = await getModelStatus(models[0].id);
     currentModelId = status.currentModelId;
+    if (currentModelId) {
+      saveLastModel(currentModelId);
+    }
+  }
+
+  async function handleSettingsDownload(modelId: string) {
+    settingsDownloadingId = modelId;
+    settingsDownloadProgress = 0;
+    settingsDownloadMessage = "Starting download...";
+    settingsDownloadError = null;
+    try {
+      await downloadModel(modelId, (p: DownloadProgress) => {
+        settingsDownloadProgress = p.progress;
+        settingsDownloadMessage = p.message;
+      });
+      await refreshModels();
+    } catch (e: unknown) {
+      settingsDownloadError = e instanceof Error ? e.message : String(e);
+      try { await refreshModels(); } catch { /* best effort */ }
+    } finally {
+      settingsDownloadingId = null;
+    }
+  }
+
+  function handleSettingsOpen() {
+    settingsOpen = true;
+    // Refresh model list so reopened Settings shows current state
+    refreshModels();
   }
 
   function handleSourceTextChange(text: string) {
@@ -220,190 +251,90 @@
   }
 </script>
 
-{#if initializing}
-  <div class="init-screen">
-    <div class="init-content">
-      <h1 class="init-title">Local Translate</h1>
-      <p class="init-subtitle">Private, offline translation powered by TranslateGemma</p>
-
-      {#if initDownloading}
-        <div class="init-step">
-          <div class="init-step-label">Downloading TranslateGemma 4B...</div>
-          <div class="init-progress-bar">
-            <div class="init-progress-fill" style="width: {initDownloadProgress * 100}%"></div>
-          </div>
-          <div class="init-progress-text">{initDownloadMessage}</div>
-        </div>
-      {:else if initLoading}
-        <div class="init-step">
-          <div class="init-step-label">Loading model...</div>
-          <div class="init-spinner"></div>
-        </div>
-      {:else if statusType === "error"}
-        <div class="init-step">
-          <div class="init-error">{statusMessage}</div>
-        </div>
-      {:else}
-        <div class="init-step">
-          <div class="init-spinner"></div>
-        </div>
-      {/if}
-    </div>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_no_static_element_interactions -->
+<header class="app-header" onmousedown={(e) => { if (e.button === 0 && e.detail === 1) getCurrentWindow().startDragging(); }}>
+  <div class="header-spacer"></div>
+  <h1 class="app-title">Local Translate</h1>
+  <div class="header-right">
+    <button class="settings-btn" onmousedown={(e) => e.stopPropagation()} onclick={handleSettingsOpen} title="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
   </div>
-{:else}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <header class="app-header" onmousedown={(e) => { if (e.button === 0 && e.detail === 1) getCurrentWindow().startDragging(); }}>
-    <div class="header-spacer"></div>
-    <h1 class="app-title">Local Translate</h1>
-    <div class="header-right">
-      <button class="settings-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => (settingsOpen = true)} title="Settings">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
-      </button>
-    </div>
-  </header>
+</header>
 
-  <main class="translate-container">
-    <TranslatePanel
-      {languages}
-      lang={sourceLang}
-      text={sourceText}
-      favorites={favoriteLangs}
-      recents={recentLangs}
-      {ttsReady}
-      {ttsError}
-      placeholder="Enter text to translate..."
-      onlangchange={handleSourceLangChange}
-      ontextchange={handleSourceTextChange}
-      ontogglefavorite={toggleFavorite}
-      maxlength={5000}
-    />
-
-    <div class="divider">
-      <button class="swap-btn" onclick={swapLanguages} title="Swap languages">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="17 1 21 5 17 9"></polyline>
-          <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-          <polyline points="7 23 3 19 7 15"></polyline>
-          <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
-        </svg>
-      </button>
-    </div>
-
-    <TranslatePanel
-      {languages}
-      lang={targetLang}
-      text={targetText}
-      favorites={favoriteLangs}
-      recents={recentLangs}
-      {ttsReady}
-      {ttsError}
-      readonly
-      loading={translating}
-      placeholder="Translation will appear here..."
-      onlangchange={handleTargetLangChange}
-      ontogglefavorite={toggleFavorite}
-    />
-  </main>
-
-  <footer class="status-bar">
-    <span class="status-indicator" class:ready={statusType === "ready"} class:error={statusType === "error"}></span>
-    <span class="status-text">{ttsStatusMessage || statusMessage}</span>
-    {#if currentModelId}
-      <span class="status-model">TranslateGemma {currentModelId.toUpperCase()}</span>
-    {/if}
-  </footer>
-
-  <Settings
-    open={settingsOpen}
-    {models}
-    {currentModelId}
-    onclose={() => (settingsOpen = false)}
-    onmodelschange={refreshModels}
+<main class="translate-container">
+  <TranslatePanel
+    {languages}
+    lang={sourceLang}
+    text={sourceText}
+    favorites={favoriteLangs}
+    recents={recentLangs}
+    {ttsReady}
+    {ttsError}
+    placeholder="Enter text to translate..."
+    onlangchange={handleSourceLangChange}
+    ontextchange={handleSourceTextChange}
+    ontogglefavorite={toggleFavorite}
+    maxlength={5000}
   />
-{/if}
+
+  <div class="divider">
+    <button class="swap-btn" onclick={swapLanguages} title="Swap languages">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="17 1 21 5 17 9"></polyline>
+        <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+        <polyline points="7 23 3 19 7 15"></polyline>
+        <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+      </svg>
+    </button>
+  </div>
+
+  <TranslatePanel
+    {languages}
+    lang={targetLang}
+    text={targetText}
+    favorites={favoriteLangs}
+    recents={recentLangs}
+    {ttsReady}
+    {ttsError}
+    readonly
+    loading={translating}
+    placeholder="Translation will appear here..."
+    onlangchange={handleTargetLangChange}
+    ontogglefavorite={toggleFavorite}
+  />
+</main>
+
+<footer class="status-bar">
+  <span class="status-indicator" class:ready={statusType === "ready"} class:error={statusType === "error"} class:loading={statusType === "loading"}></span>
+  {#if initDownloadProgress > 0 && initDownloadProgress < 1}
+    <div class="status-progress-bar">
+      <div class="status-progress-fill" style="width: {initDownloadProgress * 100}%"></div>
+    </div>
+  {/if}
+  <span class="status-text">{ttsStatusMessage || statusMessage}</span>
+  {#if currentModelId}
+    <span class="status-model">TranslateGemma {currentModelId.toUpperCase()}</span>
+  {/if}
+</footer>
+
+<Settings
+  open={settingsOpen}
+  {models}
+  {currentModelId}
+  downloadingId={settingsDownloadingId}
+  downloadProgress={settingsDownloadProgress}
+  downloadMessage={settingsDownloadMessage}
+  downloadError={settingsDownloadError}
+  onclose={() => (settingsOpen = false)}
+  onmodelschange={refreshModels}
+  ondownload={handleSettingsDownload}
+/>
 
 <style>
-  /* Init / first-launch screen */
-  .init-screen {
-    height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .init-content {
-    text-align: center;
-    max-width: 400px;
-    padding: 2rem;
-  }
-
-  .init-title {
-    font-size: 2rem;
-    font-weight: 600;
-    letter-spacing: -0.03em;
-    color: #ededed;
-    margin: 0 0 0.5rem 0;
-  }
-
-  .init-subtitle {
-    color: #888;
-    font-size: 1rem;
-    margin: 0 0 2.5rem 0;
-  }
-
-  .init-step {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .init-step-label {
-    color: #888;
-    font-size: 0.875rem;
-  }
-
-  .init-progress-bar {
-    width: 100%;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-
-  .init-progress-fill {
-    height: 100%;
-    background: #6366f1;
-    border-radius: 3px;
-    transition: width 0.3s;
-  }
-
-  .init-progress-text {
-    font-size: 0.8rem;
-    color: #555;
-  }
-
-  .init-spinner {
-    width: 24px;
-    height: 24px;
-    border: 3px solid rgba(255, 255, 255, 0.06);
-    border-top-color: #6366f1;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  .init-error {
-    color: #ef4444;
-    font-size: 0.875rem;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
   /* Header — macOS-style toolbar */
   .app-header {
     display: flex;
@@ -523,6 +454,32 @@
 
   .status-indicator.error {
     background: #ef4444;
+  }
+
+  .status-indicator.loading {
+    background: #6366f1;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .status-progress-bar {
+    width: 80px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .status-progress-fill {
+    height: 100%;
+    background: #6366f1;
+    border-radius: 2px;
+    transition: width 0.3s;
   }
 
   .status-text {

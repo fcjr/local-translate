@@ -1,22 +1,33 @@
 <script lang="ts">
-  import type { ModelInfo, DownloadProgress } from "./api";
-  import { downloadModel, loadModel } from "./api";
+  import type { ModelInfo } from "./api";
+  import { loadModel, deleteModel } from "./api";
+  import DownloadSimpleIcon from "phosphor-svelte/lib/DownloadSimpleIcon";
+  import PowerIcon from "phosphor-svelte/lib/PowerIcon";
+  import TrashIcon from "phosphor-svelte/lib/TrashIcon";
+  import CheckIcon from "phosphor-svelte/lib/CheckIcon";
+  import CheckCircleIcon from "phosphor-svelte/lib/CheckCircleIcon";
+  import XIcon from "phosphor-svelte/lib/XIcon";
+  import ArrowCounterClockwiseIcon from "phosphor-svelte/lib/ArrowCounterClockwiseIcon";
 
   interface Props {
     open: boolean;
     models: ModelInfo[];
     currentModelId: string | null;
+    downloadingId: string | null;
+    downloadProgress: number;
+    downloadMessage: string;
+    downloadError: string | null;
     onclose: () => void;
     onmodelschange: () => void;
+    ondownload: (modelId: string) => void;
   }
 
-  let { open, models, currentModelId, onclose, onmodelschange }: Props =
+  let { open, models, currentModelId, downloadingId, downloadProgress, downloadMessage, downloadError, onclose, onmodelschange, ondownload }: Props =
     $props();
 
-  let downloadingId: string | null = $state(null);
-  let downloadProgress: number = $state(0);
-  let downloadMessage: string = $state("");
   let loadingId: string | null = $state(null);
+  let deletingId: string | null = $state(null);
+  let confirmingDeleteId: string | null = $state(null);
   let error: string | null = $state(null);
 
   function handleKeydown(e: KeyboardEvent) {
@@ -34,24 +45,6 @@
     };
   });
 
-  async function handleDownload(modelId: string) {
-    downloadingId = modelId;
-    downloadProgress = 0;
-    downloadMessage = "Starting download...";
-    error = null;
-    try {
-      await downloadModel(modelId, (p: DownloadProgress) => {
-        downloadProgress = p.progress;
-        downloadMessage = p.message;
-      });
-      onmodelschange();
-    } catch (e: unknown) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      downloadingId = null;
-    }
-  }
-
   async function handleLoad(modelId: string) {
     loadingId = modelId;
     error = null;
@@ -62,6 +55,32 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       loadingId = null;
+    }
+  }
+
+  function handleDeleteClick(modelId: string) {
+    if (confirmingDeleteId === modelId) {
+      doDelete(modelId);
+    } else {
+      confirmingDeleteId = modelId;
+    }
+  }
+
+  function cancelDelete() {
+    confirmingDeleteId = null;
+  }
+
+  async function doDelete(modelId: string) {
+    confirmingDeleteId = null;
+    deletingId = modelId;
+    error = null;
+    try {
+      await deleteModel(modelId);
+      onmodelschange();
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      deletingId = null;
     }
   }
 </script>
@@ -81,8 +100,8 @@
         more RAM and are slower.
       </p>
 
-      {#if error}
-        <div class="error-banner">{error}</div>
+      {#if error || downloadError}
+        <div class="error-banner">{error || downloadError}</div>
       {/if}
 
       {#each models as model}
@@ -113,40 +132,72 @@
                 </div>
                 <span class="progress-text">{downloadMessage}</span>
               </div>
+            {:else if model.status === "downloading"}
+              <span class="status-text">Downloading...</span>
             {:else if model.status === "not_downloaded"}
               <button
-                class="btn btn-primary"
-                onclick={() => handleDownload(model.id)}
-                disabled={downloadingId !== null || loadingId !== null}
+                class="icon-btn"
+                onclick={() => ondownload(model.id)}
+                disabled={downloadingId !== null || loadingId !== null || deletingId !== null}
+                title="Download"
               >
-                Download
+                <DownloadSimpleIcon size={16} />
               </button>
-            {:else if model.status === "downloaded" && model.id !== currentModelId}
-              <button
-                class="btn btn-secondary"
-                onclick={() => handleLoad(model.id)}
-                disabled={loadingId !== null || downloadingId !== null}
-              >
-                {loadingId === model.id ? "Loading..." : "Load"}
-              </button>
+            {:else if (model.status === "downloaded" || model.status === "ready") && model.id !== currentModelId}
+              {#if confirmingDeleteId === model.id}
+                <span class="confirm-text">Delete?</span>
+                <button
+                  class="icon-btn icon-btn-danger"
+                  onclick={() => handleDeleteClick(model.id)}
+                  title="Confirm delete"
+                >
+                  <CheckIcon size={16} />
+                </button>
+                <button
+                  class="icon-btn"
+                  onclick={cancelDelete}
+                  title="Cancel"
+                >
+                  <XIcon size={16} />
+                </button>
+              {:else if deletingId === model.id}
+                <div class="action-spinner"></div>
+              {:else if loadingId === model.id}
+                <div class="action-spinner"></div>
+              {:else}
+                <button
+                  class="icon-btn icon-btn-primary"
+                  onclick={() => handleLoad(model.id)}
+                  disabled={loadingId !== null || downloadingId !== null || deletingId !== null}
+                  title={model.status === "ready" ? "Switch to this model" : "Load model"}
+                >
+                  <PowerIcon size={16} weight="fill" />
+                </button>
+                <button
+                  class="icon-btn icon-btn-danger"
+                  onclick={() => handleDeleteClick(model.id)}
+                  disabled={loadingId !== null || downloadingId !== null || deletingId !== null}
+                  title="Delete model"
+                >
+                  <TrashIcon size={16} />
+                </button>
+              {/if}
+            {:else if model.id === currentModelId}
+              <span class="active-indicator">
+                <CheckCircleIcon size={16} weight="fill" />
+                In use
+              </span>
             {:else if model.status === "loading"}
-              <span class="status-text">Loading...</span>
-            {:else if model.status === "ready" && model.id !== currentModelId}
-              <button
-                class="btn btn-secondary"
-                onclick={() => handleLoad(model.id)}
-                disabled={loadingId !== null}
-              >
-                Switch to this
-              </button>
+              <div class="action-spinner"></div>
             {:else if model.status === "error"}
               <div class="error-text">{model.error}</div>
               <button
-                class="btn btn-primary"
-                onclick={() => handleDownload(model.id)}
+                class="icon-btn"
+                onclick={() => ondownload(model.id)}
                 disabled={downloadingId !== null}
+                title="Retry download"
               >
-                Retry
+                <ArrowCounterClockwiseIcon size={16} />
               </button>
             {/if}
           </div>
@@ -277,43 +328,70 @@
   .model-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    min-height: 32px;
   }
 
-  .btn {
-    padding: 0.6rem 1rem;
+  .icon-btn {
+    width: 32px;
+    height: 32px;
     border-radius: 8px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    font-family: inherit;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
     cursor: pointer;
-    border: none;
-    transition: background 0.15s;
-    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+    flex-shrink: 0;
   }
 
-  .btn:disabled {
-    opacity: 0.4;
+  .icon-btn:hover:not(:disabled) {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .icon-btn:disabled {
+    opacity: 0.3;
     cursor: not-allowed;
   }
 
-  .btn-primary {
-    background: #ededed;
-    color: #0a0a0b;
+  .icon-btn-primary {
+    color: #ededed;
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.3);
   }
 
-  .btn-primary:hover:not(:disabled) {
-    background: #fff;
+  .icon-btn-primary:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: #fff;
   }
 
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text);
-    border: 1px solid var(--border);
+  .icon-btn-danger {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.2);
+    background: rgba(239, 68, 68, 0.08);
   }
 
-  .btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
+  .icon-btn-danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.35);
+  }
+
+  .action-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255, 255, 255, 0.08);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .progress-container {
@@ -345,6 +423,21 @@
   .status-text {
     font-size: 13px;
     color: var(--text-secondary);
+  }
+
+  .active-indicator {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    color: #22c55e;
+    font-weight: 500;
+  }
+
+  .confirm-text {
+    font-size: 13px;
+    color: #ef4444;
+    font-weight: 500;
   }
 
   .error-text {
