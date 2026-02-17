@@ -222,7 +222,7 @@ jobs:
           releaseName: "Local Translate v__VERSION__"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: false
-          includeDebug: true # Optional, disable to speed up the build
+          includeDebug: false
           includeUpdaterJson: true
           args: '--target ${{ matrix.target }} --config src-tauri/tauri.bundle.json --verbose'
 
